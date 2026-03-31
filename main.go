@@ -258,6 +258,9 @@ func loadTemplates() *template.Template {
 			fmt.Sscanf(s, "%d", &v)
 			return v
 		},
+		"toFloat": func(n int64) float64 {
+			return float64(n)
+		},
 		"formatDateTime": func(t time.Time) string {
 			if t.IsZero() {
 				return "-"
