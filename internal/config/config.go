@@ -12,6 +12,8 @@ import (
 type Config struct {
 	// DBPath는 SQLite 데이터베이스 파일 경로
 	DBPath string
+	// ServerHost는 HTTP 서버 바인딩 주소 (default: 127.0.0.1)
+	ServerHost string
 	// ServerPort는 HTTP 서버 포트
 	ServerPort int
 	// CollectionInterval은 usage 데이터 수집 주기
@@ -34,6 +36,7 @@ func LoadConfig() (*Config, error) {
 
 	return &Config{
 		DBPath:             getEnv("DB_PATH", "./data/usage.db"),
+		ServerHost:         getEnv("SERVER_HOST", "127.0.0.1"),
 		ServerPort:         getIntEnv("SERVER_PORT", 8080),
 		CollectionInterval: time.Duration(interval) * time.Second,
 		ClaudeCredPath:     getEnv("CLAUDE_CRED_PATH", "~/.claude/.credentials.json"),

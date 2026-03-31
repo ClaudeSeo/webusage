@@ -18,6 +18,7 @@ import (
 // Server manages the HTTP server
 type Server struct {
 	store       *store.Store
+	host        string
 	port        int
 	logger      *slog.Logger
 	mux         *nethttp.ServeMux
@@ -26,7 +27,7 @@ type Server struct {
 }
 
 // NewServer creates a new HTTP server. templateDir은 옵션 — 빈 문자열이면 "templates" 기본값 사용
-func NewServer(s *store.Store, port int, logger *slog.Logger, templateDir ...string) (*Server, error) {
+func NewServer(s *store.Store, host string, port int, logger *slog.Logger, templateDir ...string) (*Server, error) {
 	tdir := "templates"
 	if len(templateDir) > 0 && templateDir[0] != "" {
 		tdir = templateDir[0]
@@ -34,6 +35,7 @@ func NewServer(s *store.Store, port int, logger *slog.Logger, templateDir ...str
 
 	server := &Server{
 		store:       s,
+		host:        host,
 		port:        port,
 		logger:      logger,
 		mux:         nethttp.NewServeMux(),
@@ -346,7 +348,7 @@ func (s *Server) jsonError(w nethttp.ResponseWriter, message string, status int)
 
 // Start begins serving HTTP requests
 func (s *Server) Start(ctx context.Context) error {
-	addr := fmt.Sprintf("127.0.0.1:%d", s.port)
+	addr := fmt.Sprintf("%s:%d", s.host, s.port)
 
 	server := &nethttp.Server{
 		Addr:         addr,

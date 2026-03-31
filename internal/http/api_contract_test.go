@@ -73,7 +73,7 @@ func setupTestServerForContract(t *testing.T) (*Server, func()) {
 		t.Fatalf("Failed to create test store: %v", err)
 	}
 
-	server, err := NewServer(s, 8080, logger, "../../templates")
+	server, err := NewServer(s, "127.0.0.1", 8080, logger, "../../templates")
 	if err != nil {
 		t.Fatalf("Failed to create test server: %v", err)
 	}
