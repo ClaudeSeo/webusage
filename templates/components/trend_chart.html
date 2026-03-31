@@ -26,7 +26,7 @@ const providerColors = {
     {{- $first := true}}
     {{- range .Providers}}
     {{- if not $first}},{{end}}
-    '{{.ID}}': 'hsl({{mul (index $ 0) 137.5 | mod 360}}, 70%, 60%)'
+    '{{.ID}}': 'hsl({{mul (toInt64 (index $ 0)) 137 | mod 360}}, 70%, 60%)'
     {{- $first = false}}
     {{- end}}
 };

@@ -258,6 +258,9 @@ func loadTemplates() *template.Template {
 			fmt.Sscanf(s, "%d", &v)
 			return v
 		},
+		"toInt64": func(n int) int64 {
+			return int64(n)
+		},
 		"toFloat": func(n int64) float64 {
 			return float64(n)
 		},
