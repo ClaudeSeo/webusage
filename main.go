@@ -77,7 +77,107 @@ var (
 	}
 )
 
+func initSampleData() {
+	now := time.Now()
+	
+	currentState.Providers = []Provider{
+		{
+			ID:          "openai",
+			Name:        "OpenAI",
+			Used:        45000,
+			Limit:       100000,
+			Remaining:   55000,
+			ResetAt:     time.Date(now.Year(), now.Month()+1, 1, 0, 0, 0, 0, time.UTC),
+			CollectedAt: &now,
+			LastError:   "",
+			UpdatedAt:   now,
+		},
+		{
+			ID:          "anthropic",
+			Name:        "Anthropic",
+			Used:        82000,
+			Limit:       100000,
+			Remaining:   18000,
+			ResetAt:     time.Date(now.Year(), now.Month()+1, 1, 0, 0, 0, 0, time.UTC),
+			CollectedAt: &now,
+			LastError:   "",
+			UpdatedAt:   now,
+		},
+	}
+	
+	// Generate trend data for 24h/7d/30d
+	for _, rangeName := range []string{"24h", "7d", "30d"} {
+		var points []TrendPoint
+		var interval time.Duration
+		
+		switch rangeName {
+		case "24h":
+			interval = time.Hour
+			for i := 24; i >= 0; i-- {
+				t := now.Add(-time.Duration(i) * interval)
+				points = append(points, TrendPoint{
+					CollectedAt: t,
+					ProviderID:  "openai",
+					Metric:      "usage",
+					Used:        45000 - int64(i*1000),
+					Limit:       100000,
+				})
+				points = append(points, TrendPoint{
+					CollectedAt: t,
+					ProviderID:  "anthropic",
+					Metric:      "usage",
+					Used:        82000 - int64(i*500),
+					Limit:       100000,
+				})
+			}
+		case "7d":
+			interval = 24 * time.Hour
+			for i := 7; i >= 0; i-- {
+				t := now.Add(-time.Duration(i) * interval)
+				points = append(points, TrendPoint{
+					CollectedAt: t,
+					ProviderID:  "openai",
+					Metric:      "usage",
+					Used:        45000 - int64(i*5000),
+					Limit:       100000,
+				})
+				points = append(points, TrendPoint{
+					CollectedAt: t,
+					ProviderID:  "anthropic",
+					Metric:      "usage",
+					Used:        82000 - int64(i*3000),
+					Limit:       100000,
+				})
+			}
+		case "30d":
+			interval = 24 * time.Hour
+			for i := 30; i >= 0; i-- {
+				t := now.Add(-time.Duration(i) * interval)
+				points = append(points, TrendPoint{
+					CollectedAt: t,
+					ProviderID:  "openai",
+					Metric:      "usage",
+					Used:        45000 - int64(i*1000),
+					Limit:       100000,
+				})
+				points = append(points, TrendPoint{
+					CollectedAt: t,
+					ProviderID:  "anthropic",
+					Metric:      "usage",
+					Used:        82000 - int64(i*800),
+					Limit:       100000,
+				})
+			}
+		}
+		
+		currentState.Trends[rangeName] = points
+	}
+}
+
 func main() {
+	// Initialize sample data
+	initSampleData()
+	
 	// Load templates
 	tmpl := loadTemplates()
 
@@ -140,8 +240,15 @@ func loadTemplates() *template.Template {
 
 	// Parse templates with custom functions
 	funcMap := template.FuncMap{
-		"formatNumber": func(n int64) string {
-			return fmt.Sprintf("%d", n)
+		"formatNumber": func(n interface{}) string {
+			switch v := n.(type) {
+			case int64:
+				return fmt.Sprintf("%d", v)
+			case float64:
+				return fmt.Sprintf("%.0f", v)
+			default:
+				return fmt.Sprintf("%v", v)
+			}
 		},
 		"formatDateTime": func(t time.Time) string {
 			if t.IsZero() {
