@@ -1,0 +1,196 @@
+{{define "trendChart"}}
+<div class="chart-container">
+    <div class="chart-header">
+        <h3 class="chart-title">📈 사용량 추이</h3>
+        <div class="chart-controls">
+            <button class="btn {{if eq .Range "24h"}}btn-primary{{end}}" 
+                    onclick="loadTrendData('24h')" 
+                    data-range="24h">24h</button>
+            <button class="btn {{if eq .Range "7d"}}btn-primary{{end}}" 
+                    onclick="loadTrendData('7d')" 
+                    data-range="7d">7d</button>
+            <button class="btn {{if eq .Range "30d"}}btn-primary{{end}}" 
+                    onclick="loadTrendData('30d')" 
+                    data-range="30d">30d</button>
+        </div>
+    </div>
+    
+    <div style="position: relative; height: 400px;">
+        <canvas id="trendChart"></canvas>
+    </div>
+</div>
+
+<script>
+let trendChartInstance = null;
+const providerColors = {
+    {{- $first := true}}
+    {{- range .Providers}}
+    {{- if not $first}},{{end}}
+    '{{.ID}}': 'hsl({{mul (index $ 0) 137.5 | mod 360}}, 70%, 60%)'
+    {{- $first = false}}
+    {{- end}}
+};
+
+function getProviderColor(providerId, index) {
+    const hue = (index * 137.5) % 360;
+    return `hsl(${hue}, 70%, 60%)`;
+}
+
+async function loadTrendData(range = '{{.Range}}') {
+    try {
+        const response = await fetch(`/api/trends?range=${range}`);
+        if (!response.ok) throw new Error('데이터 로드 실패');
+        
+        const data = await response.json();
+        renderTrendChart(data, range);
+        
+        // Update button states
+        document.querySelectorAll('.chart-controls .btn').forEach(btn => {
+            btn.classList.toggle('btn-primary', btn.dataset.range === range);
+        });
+    } catch (error) {
+        console.error('추이 데이터 로드 오류:', error);
+        showErrorState('추이 데이터를 불러올 수 없습니다.');
+    }
+}
+
+// Validate range parameter
+function isValidRange(range) {
+    return ['24h', '7d', '30d'].includes(range);
+}
+
+function renderTrendChart(data, range) {
+    const ctx = document.getElementById('trendChart').getContext('2d');
+    
+    // Group data by provider
+    const providerData = {};
+    const labels = new Set();
+    
+    data.points.forEach(point => {
+        if (!providerData[point.providerId]) {
+            providerData[point.providerId] = [];
+        }
+        labels.add(point.collectedAt);
+    });
+    
+    // Sort labels chronologically
+    const sortedLabels = Array.from(labels).sort((a, b) => 
+        new Date(a) - new Date(b)
+    );
+    
+    // Build datasets for each provider
+    const datasets = Object.keys(providerData).map((providerId, index) => {
+        const providerPoints = data.points
+            .filter(p => p.providerId === providerId)
+            .sort((a, b) => new Date(a.collectedAt) - new Date(b.collectedAt));
+        
+        return {
+            label: providerId,
+            data: sortedLabels.map(label => {
+                const point = providerPoints.find(p => p.collectedAt === label);
+                return point ? ((point.used / point.limit) * 100).toFixed(2) : null;
+            }),
+            borderColor: getProviderColor(providerId, index),
+            backgroundColor: getProviderColor(providerId, index).replace('60%', '20%'),
+            tension: 0.4,
+            fill: false,
+            pointRadius: 3,
+            pointHoverRadius: 5
+        };
+    });
+    
+    // Destroy existing chart
+    if (trendChartInstance) {
+        trendChartInstance.destroy();
+    }
+    
+    // Create new chart
+    trendChartInstance = new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: sortedLabels.map(label => {
+                const date = new Date(label);
+                if (range === '24h') {
+                    return date.toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' });
+                } else if (range === '7d') {
+                    return date.toLocaleDateString('ko-KR', { month: 'short', day: 'numeric' });
+                } else { // 30d
+                    return date.toLocaleDateString('ko-KR', { month: 'numeric', day: 'numeric' });
+                }
+            }),
+            datasets: datasets
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            interaction: {
+                mode: 'index',
+                intersect: false
+            },
+            plugins: {
+                legend: {
+                    display: true,
+                    position: 'top',
+                    labels: {
+                        color: '#f1f5f9',
+                        usePointStyle: true,
+                        padding: 15
+                    }
+                },
+                tooltip: {
+                    backgroundColor: 'rgba(30, 41, 59, 0.95)',
+                    titleColor: '#f1f5f9',
+                    bodyColor: '#94a3b8',
+                    borderColor: '#475569',
+                    borderWidth: 1,
+                    callbacks: {
+                        label: function(context) {
+                            return `${context.dataset.label}: ${context.parsed.y.toFixed(1)}%`;
+                        }
+                    }
+                }
+            },
+            scales: {
+                x: {
+                    grid: {
+                        color: '#334155'
+                    },
+                    ticks: {
+                        color: '#94a3b8',
+                        maxRotation: 45,
+                        minRotation: 45
+                    }
+                },
+                y: {
+                    beginAtZero: true,
+                    max: 100,
+                    grid: {
+                        color: '#334155'
+                    },
+                    ticks: {
+                        color: '#94a3b8',
+                        callback: function(value) {
+                            return value + '%';
+                        }
+                    },
+                    title: {
+                        display: true,
+                        text: '사용률 (%)',
+                        color: '#94a3b8'
+                    }
+                }
+            }
+        }
+    });
+}
+
+// Initialize chart on page load
+document.addEventListener('DOMContentLoaded', function() {
+    {{if .TrendData}}
+        renderTrendChart({{.TrendData}}, '{{.Range}}');
+    {{else}}
+        loadTrendData('{{.Range}}');
+    {{end}}
+});
+</script>
+{{end}}

@@ -1,0 +1,82 @@
+{{define "errorState"}}
+<div class="error-state" data-error-type="{{.Type}}">
+    <div class="error-icon">
+        {{if eq .Type "no-data"}}
+            📭
+        {{else if eq .Type "collection-error"}}
+            ⚠️
+        {{else if eq .Type "api-error"}}
+            🔌
+        {{else if eq .Type "stale"}}
+            🕐
+        {{else}}
+            ❌
+        {{end}}
+    </div>
+    
+    <h3 style="font-size: 1.25rem; margin-bottom: 0.5rem; color: var(--text-primary);">
+        {{.Title}}
+    </h3>
+    
+    <p class="error-message">
+        {{.Message}}
+    </p>
+    
+    {{/* Distinct messaging for no-data vs collection-failed */}}
+    {{if eq .Type "no-data"}}
+        <div style="margin-top: 1rem; padding: 0.75rem; background: rgba(59, 130, 246, 0.1); border-radius: 8px; border-left: 3px solid var(--accent-blue);">
+            <p style="font-size: 0.75rem; color: var(--accent-blue); font-weight: 600;">💡 안내</p>
+            <p style="font-size: 0.75rem; color: var(--text-secondary); margin-top: 0.25rem;">
+                백엔드 서비스가 첫 데이터 수집을 완료하지 못했습니다.<br>
+                서버가 정상 실행 중인지 확인하세요.
+            </p>
+        </div>
+    {{else if eq .Type "collection-error"}}
+        <div style="margin-top: 1rem; padding: 0.75rem; background: rgba(239, 68, 68, 0.1); border-radius: 8px; border-left: 3px solid var(--accent-red);">
+            <p style="font-size: 0.75rem; color: var(--accent-red); font-weight: 600;">🔧 조치 필요</p>
+            <p style="font-size: 0.75rem; color: var(--text-secondary); margin-top: 0.25rem;">
+                Provider API 에서 데이터 수집에 실패했습니다.<br>
+                네트워크 연결 또는 API 키를 확인하세요.
+            </p>
+        </div>
+    {{end}}
+    
+    {{if .ShowRetry}}
+        <button class="btn btn-primary" onclick="retryFetch()" style="margin-top: 1.5rem;">
+            🔄 다시 시도
+        </button>
+    {{end}}
+    
+    {{if .ErrorDetail}}
+        <div style="margin-top: 1.5rem; padding: 1rem; background: rgba(239, 68, 68, 0.1); border-radius: 8px; text-align: left; max-width: 500px; margin-left: auto; margin-right: auto;">
+            <p style="font-size: 0.75rem; color: var(--accent-red); font-weight: 600; margin-bottom: 0.5rem;">에러 상세</p>
+            <pre style="font-size: 0.75rem; color: var(--text-secondary); white-space: pre-wrap; word-break: break-word; font-family: 'SF Mono', Monaco, 'Cascadia Code', monospace;">{{.ErrorDetail}}</pre>
+        </div>
+    {{end}}
+</div>
+
+<script>
+async function retryFetch() {
+    const retryBtn = event.target;
+    retryBtn.disabled = true;
+    retryBtn.textContent = '⏳ 로딩 중...';
+    
+    try {
+        // Reload the page to fetch fresh data
+        window.location.reload();
+    } catch (error) {
+        console.error('재시도 실패:', error);
+        retryBtn.disabled = false;
+        retryBtn.textContent = '🔄 다시 시도';
+    }
+}
+
+// Auto-refresh for collection errors
+{{if eq .Type "collection-error"}}
+setTimeout(function() {
+    console.log('자동 재시도...');
+    window.location.reload();
+}, 30000); // 30 초 후 자동 재시도
+{{end}}
+</script>
+{{end}}
