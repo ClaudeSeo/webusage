@@ -14,15 +14,15 @@ import (
 
 // Data models
 type Provider struct {
-	ID          string     `json:"id"`
-	Name        string     `json:"name"`
-	Used        int64      `json:"used"`
-	Limit       int64      `json:"limit"`
-	Remaining   int64      `json:"remaining"`
-	ResetAt     time.Time  `json:"resetAt"`
-	CollectedAt *time.Time `json:"collectedAt,omitempty"`
-	LastError   string     `json:"lastError,omitempty"`
-	UpdatedAt   time.Time  `json:"updatedAt"`
+	ID            string     `json:"id"`
+	Name          string     `json:"name"`
+	Used          int64      `json:"used"`
+	Limit         int64      `json:"limit"`
+	Remaining     int64      `json:"remaining"`
+	ResetAt       time.Time  `json:"reset_at"`
+	LastSuccessAt *time.Time `json:"last_success_at,omitempty"`
+	LastError     string     `json:"last_error,omitempty"`
+	UpdatedAt     time.Time  `json:"updated_at"`
 }
 
 type TrendPoint struct {
@@ -79,29 +79,42 @@ var (
 
 func initSampleData() {
 	now := time.Now()
+	oldTime := now.Add(-3 * time.Hour) // stale demo
 	
 	currentState.Providers = []Provider{
 		{
-			ID:          "openai",
-			Name:        "OpenAI",
-			Used:        int64(45000),
-			Limit:       int64(100000),
-			Remaining:   int64(55000),
-			ResetAt:     time.Date(now.Year(), now.Month()+1, 1, 0, 0, 0, 0, time.UTC),
-			CollectedAt: &now,
-			LastError:   "",
-			UpdatedAt:   now,
+			ID:            "openai",
+			Name:          "OpenAI",
+			Used:          int64(45000),
+			Limit:         int64(100000),
+			Remaining:     int64(55000),
+			ResetAt:       time.Date(now.Year(), now.Month()+1, 1, 0, 0, 0, 0, time.UTC),
+			LastSuccessAt: &now,
+			LastError:     "",
+			UpdatedAt:     now,
 		},
 		{
-			ID:          "anthropic",
-			Name:        "Anthropic",
-			Used:        int64(82000),
-			Limit:       int64(100000),
-			Remaining:   int64(18000),
-			ResetAt:     time.Date(now.Year(), now.Month()+1, 1, 0, 0, 0, 0, time.UTC),
-			CollectedAt: &now,
-			LastError:   "",
-			UpdatedAt:   now,
+			ID:            "anthropic",
+			Name:          "Anthropic",
+			Used:          int64(82000),
+			Limit:         int64(100000),
+			Remaining:     int64(18000),
+			ResetAt:       time.Date(now.Year(), now.Month()+1, 1, 0, 0, 0, 0, time.UTC),
+			LastSuccessAt: &oldTime,
+			CollectedAt:   &oldTime, // stale demo
+			LastError:     "",
+			UpdatedAt:     oldTime,
+		},
+		{
+			ID:            "test-error",
+			Name:          "Test Provider (Error)",
+			Used:          int64(0),
+			Limit:         int64(100000),
+			Remaining:     int64(100000),
+			ResetAt:       time.Date(now.Year(), now.Month()+1, 1, 0, 0, 0, 0, time.UTC),
+			LastSuccessAt: nil,
+			LastError:     "API key expired",
+			UpdatedAt:     now,
 		},
 	}
 	
