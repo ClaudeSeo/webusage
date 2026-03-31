@@ -1,279 +1,539 @@
 package main
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
-	"log/slog"
+	"html/template"
+	"log"
+	"net/http"
 	"os"
-	"os/signal"
-	"syscall"
+	"path/filepath"
+	"sync"
 	"time"
-
-	"github.com/joho/godotenv"
-	"github.com/openclaw/ai-usage-dashboard/internal/collector"
-	"github.com/openclaw/ai-usage-dashboard/internal/http"
-	"github.com/openclaw/ai-usage-dashboard/internal/provider"
-	"github.com/openclaw/ai-usage-dashboard/internal/store"
 )
 
-type Config struct {
-	DBPath            string
-	ServerPort        int
-	OpenAIKey         string
-	AnthropicKey      string
-	CollectionInterval time.Duration
-	DemoMode          bool
+// Data models
+type Provider struct {
+	ID          string     `json:"id"`
+	Name        string     `json:"name"`
+	Used        int64      `json:"used"`
+	Limit       int64      `json:"limit"`
+	Remaining   int64      `json:"remaining"`
+	ResetAt     time.Time  `json:"resetAt"`
+	CollectedAt *time.Time `json:"collectedAt,omitempty"`
+	LastError   string     `json:"lastError,omitempty"`
+	UpdatedAt   time.Time  `json:"updatedAt"`
+}
+
+type TrendPoint struct {
+	CollectedAt time.Time `json:"collectedAt"`
+	ProviderID  string    `json:"providerId"`
+	Metric      string    `json:"metric"`
+	Used        int64     `json:"used"`
+	Limit       int64     `json:"limit"`
+}
+
+type CurrentResponse struct {
+	Providers []Provider `json:"providers"`
+}
+
+type TrendsResponse struct {
+	Points []TrendPoint `json:"points"`
+}
+
+type ProvidersResponse struct {
+	Providers []ProviderInfo `json:"providers"`
+}
+
+type ProviderInfo struct {
+	ID      string `json:"id"`
+	Name    string `json:"name"`
+	Enabled bool   `json:"enabled"`
+}
+
+type HealthResponse struct {
+	Status string `json:"status"` // "ok", "degraded", "error"
+}
+
+type DashboardData struct {
+	Title        string
+	Providers    []Provider
+	HealthStatus string
+	TrendData    *TrendsResponse
+	Range        string
+	HasError     bool
+	ErrorMessage string
+}
+
+// Global state (in production, use proper caching/database)
+var (
+	currentState = struct {
+		sync.RWMutex
+		Providers []Provider
+		Trends    map[string][]TrendPoint // keyed by range ("24h", "7d")
+		LastError error
+	}{
+		Trends: make(map[string][]TrendPoint),
+	}
+)
+
+func initSampleData() {
+	now := time.Now()
+	
+	currentState.Providers = []Provider{
+		{
+			ID:          "openai",
+			Name:        "OpenAI",
+			Used:        45000,
+			Limit:       100000,
+			Remaining:   55000,
+			ResetAt:     time.Date(now.Year(), now.Month()+1, 1, 0, 0, 0, 0, time.UTC),
+			CollectedAt: &now,
+			LastError:   "",
+			UpdatedAt:   now,
+		},
+		{
+			ID:          "anthropic",
+			Name:        "Anthropic",
+			Used:        82000,
+			Limit:       100000,
+			Remaining:   18000,
+			ResetAt:     time.Date(now.Year(), now.Month()+1, 1, 0, 0, 0, 0, time.UTC),
+			CollectedAt: &now,
+			LastError:   "",
+			UpdatedAt:   now,
+		},
+	}
+	
+	// Generate trend data for 24h/7d/30d
+	for _, rangeName := range []string{"24h", "7d", "30d"} {
+		var points []TrendPoint
+		var interval time.Duration
+		
+		switch rangeName {
+		case "24h":
+			interval = time.Hour
+			for i := 24; i >= 0; i-- {
+				t := now.Add(-time.Duration(i) * interval)
+				points = append(points, TrendPoint{
+					CollectedAt: t,
+					ProviderID:  "openai",
+					Metric:      "usage",
+					Used:        45000 - int64(i*1000),
+					Limit:       100000,
+				})
+				points = append(points, TrendPoint{
+					CollectedAt: t,
+					ProviderID:  "anthropic",
+					Metric:      "usage",
+					Used:        82000 - int64(i*500),
+					Limit:       100000,
+				})
+			}
+		case "7d":
+			interval = 24 * time.Hour
+			for i := 7; i >= 0; i-- {
+				t := now.Add(-time.Duration(i) * interval)
+				points = append(points, TrendPoint{
+					CollectedAt: t,
+					ProviderID:  "openai",
+					Metric:      "usage",
+					Used:        45000 - int64(i*5000),
+					Limit:       100000,
+				})
+				points = append(points, TrendPoint{
+					CollectedAt: t,
+					ProviderID:  "anthropic",
+					Metric:      "usage",
+					Used:        82000 - int64(i*3000),
+					Limit:       100000,
+				})
+			}
+		case "30d":
+			interval = 24 * time.Hour
+			for i := 30; i >= 0; i-- {
+				t := now.Add(-time.Duration(i) * interval)
+				points = append(points, TrendPoint{
+					CollectedAt: t,
+					ProviderID:  "openai",
+					Metric:      "usage",
+					Used:        45000 - int64(i*1000),
+					Limit:       100000,
+				})
+				points = append(points, TrendPoint{
+					CollectedAt: t,
+					ProviderID:  "anthropic",
+					Metric:      "usage",
+					Used:        82000 - int64(i*800),
+					Limit:       100000,
+				})
+			}
+		}
+		
+		currentState.Trends[rangeName] = points
+	}
 }
 
 func main() {
-	// Load environment variables
-	if err := godotenv.Load(); err != nil {
-		// Continue without .env file if it doesn't exist
-		fmt.Println("No .env file found, using environment variables")
+	// Check DEMO_MODE
+	demoMode := os.Getenv("DEMO_MODE") == "true"
+	if demoMode {
+		log.Println("🔧 DEMO_MODE enabled - seeding sample data")
+		initSampleData()
 	}
 	
-	// Load configuration
-	config := loadConfig()
+	// Load templates
+	tmpl := loadTemplates()
+
+	// Setup routes
+	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/" {
+			http.NotFound(w, r)
+			return
+		}
+		handleDashboard(tmpl, w, r)
+	})
+
+	http.HandleFunc("/api/current", handleAPICurrent)
+	http.HandleFunc("/api/trends", handleAPITrends)
+	http.HandleFunc("/api/providers", handleAPIProviders)
+	http.HandleFunc("/healthz", handleHealthz)
+
+	// Start server
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8080"
+	}
+
+	log.Printf("🚀 AI 사용량 대시보드 서버 시작 (포트 %s)", port)
+	log.Printf("📊 대시보드 URL: http://localhost:%s", port)
 	
-	// Setup structured logging (JSON format)
-	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
-		Level: slog.LevelInfo,
-	}))
+	if err := http.ListenAndServe(":"+port, nil); err != nil {
+		log.Fatalf("서버 시작 실패: %v", err)
+	}
+}
+
+func loadTemplates() *template.Template {
+	basePath := "templates"
 	
-	logger.Info("Starting AI Usage Dashboard",
-		"version", "1.0.0",
-		"db_path", config.DBPath,
-		"server_port", config.ServerPort)
-	
-	// Initialize database
-	store, err := store.NewStore(config.DBPath)
+	// Read component templates
+	providerCard, err := os.ReadFile(filepath.Join(basePath, "components", "provider_card.html"))
 	if err != nil {
-		logger.Error("Failed to initialize database", "error", err)
-		os.Exit(1)
+		log.Fatalf("템플릿 로드 실패 (provider_card): %v", err)
 	}
-	defer store.Close()
-	
-	logger.Info("Database initialized with WAL mode")
-	
-	// Register providers
-	providers := setupProviders(config, logger)
-	
-	// Initialize providers in database
-	if err := initializeProvidersInDB(store, providers); err != nil {
-		logger.Error("Failed to initialize providers", "error", err)
-		os.Exit(1)
-	}
-	
-	// Seed demo data if DEMO_MODE is enabled
-	if config.DemoMode {
-		logger.Info("DEMO_MODE enabled - seeding sample data")
-		if err := seedDemoData(store); err != nil {
-			logger.Error("Failed to seed demo data", "error", err)
-			os.Exit(1)
-		}
-		logger.Info("Demo data seeded successfully")
-	}
-	
-	// Create context with cancellation
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	
-	// Setup signal handling
-	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
-	
-	go func() {
-		sig := <-sigChan
-		logger.Info("Received shutdown signal", "signal", sig)
-		cancel()
-	}()
-	
-	// Start HTTP server
-	httpServer, err := http.NewServer(store, config.ServerPort, logger)
+
+	trendChart, err := os.ReadFile(filepath.Join(basePath, "components", "trend_chart.html"))
 	if err != nil {
-		logger.Error("Failed to create HTTP server", "error", err)
-		os.Exit(1)
+		log.Fatalf("템플릿 로드 실패 (trend_chart): %v", err)
 	}
-	
-	// Start collector
-	coll := collector.NewCollector(store, providers, config.CollectionInterval, logger)
-	
-	// Run both services
-	errChan := make(chan error, 2)
-	
-	go func() {
-		if err := httpServer.Start(ctx); err != nil {
-			errChan <- fmt.Errorf("HTTP server: %w", err)
-		}
-	}()
-	
-	go func() {
-		if err := coll.Start(ctx); err != nil {
-			errChan <- fmt.Errorf("Collector: %w", err)
-		}
-	}()
-	
-	// Wait for errors or shutdown
-	select {
-	case err := <-errChan:
-		logger.Error("Service failed", "error", err)
-		os.Exit(1)
-	case <-ctx.Done():
-		logger.Info("Shutting down gracefully")
-	}
-	
-	logger.Info("Shutdown complete")
-}
 
-func loadConfig() *Config {
-	dbPath := getEnv("DB_PATH", "./data/usage.db")
-	port := getIntEnv("SERVER_PORT", 8080)
-	interval := getIntEnv("COLLECTION_INTERVAL", 300) // 5 minutes default
-	demoMode := getEnv("DEMO_MODE", "false") == "true"
-	
-	return &Config{
-		DBPath:            dbPath,
-		ServerPort:        port,
-		OpenAIKey:         os.Getenv("OPENAI_API_KEY"),
-		AnthropicKey:      os.Getenv("ANTHROPIC_API_KEY"),
-		CollectionInterval: time.Duration(interval) * time.Second,
-		DemoMode:          demoMode,
+	errorState, err := os.ReadFile(filepath.Join(basePath, "components", "error_state.html"))
+	if err != nil {
+		log.Fatalf("템플릿 로드 실패 (error_state): %v", err)
 	}
-}
 
-func setupProviders(config *Config, logger *slog.Logger) []provider.Provider {
-	var providers []provider.Provider
-	
-	// OpenAI Provider
-	if config.OpenAIKey != "" {
-		openaiConfig := provider.ProviderConfig{
-			APIKey: config.OpenAIKey,
-		}
-		providers = append(providers, provider.NewOpenAIProvider(openaiConfig))
-		logger.Info("OpenAI provider configured")
-	} else {
-		logger.Warn("OpenAI API key not configured")
+	dashboard, err := os.ReadFile(filepath.Join(basePath, "dashboard.html"))
+	if err != nil {
+		log.Fatalf("템플릿 로드 실패 (dashboard): %v", err)
 	}
-	
-	// Anthropic Provider
-	if config.AnthropicKey != "" {
-		anthropicConfig := provider.ProviderConfig{
-			APIKey: config.AnthropicKey,
-		}
-		providers = append(providers, provider.NewAnthropicProvider(anthropicConfig))
-		logger.Info("Anthropic provider configured")
-	} else {
-		logger.Warn("Anthropic API key not configured")
-	}
-	
-	return providers
-}
 
-func initializeProvidersInDB(store *store.Store, providers []provider.Provider) error {
-	for _, p := range providers {
-		// Check if provider exists
-		existing, err := store.GetProviderByName(p.Name())
-		if err == nil && existing != nil {
-			continue // Already exists
-		}
-		
-		// Create provider config
-		config := provider.ProviderConfig{
-			APIKey: "***REDACTED***",
-		}
-		configJSON, err := json.Marshal(config)
-		if err != nil {
-			return fmt.Errorf("marshaling config for %s: %w", p.Name(), err)
-		}
-		
-		// Insert into database
-		if _, err := store.CreateProvider(p.Name(), string(configJSON)); err != nil {
-			return fmt.Errorf("creating provider %s: %w", p.Name(), err)
-		}
+	layout, err := os.ReadFile(filepath.Join(basePath, "layout.html"))
+	if err != nil {
+		log.Fatalf("템플릿 로드 실패 (layout): %v", err)
 	}
-	
-	return nil
-}
 
-func getEnv(key, defaultValue string) string {
-	if value := os.Getenv(key); value != "" {
-		return value
-	}
-	return defaultValue
-}
-
-func getIntEnv(key string, defaultValue int) int {
-	value := os.Getenv(key)
-	if value == "" {
-		return defaultValue
-	}
-	
-	var result int
-	if _, err := fmt.Sscanf(value, "%d", &result); err != nil {
-		return defaultValue
-	}
-	return result
-}
-
-// seedDemoData inserts sample provider and usage data for demo purposes
-func seedDemoData(s *store.Store) error {
-	now := time.Now()
-	resetAt := time.Date(now.Year(), now.Month()+1, 1, 0, 0, 0, 0, time.UTC)
-	
-	// Seed providers (ignore if already exist)
-	providerIDs := make(map[string]int64)
-	for _, p := range []struct{ id, name string }{
-		{"openai", "OpenAI"},
-		{"anthropic", "Anthropic"},
-	} {
-		id, err := s.CreateProvider(p.name, ``)
-		if err != nil {
-			// Try to get existing provider
-			existing, err := s.GetProviderByName(p.name)
-			if err != nil {
-				return fmt.Errorf("creating provider %s: %w", p.name, err)
+	// Parse templates with custom functions
+	funcMap := template.FuncMap{
+		"formatNumber": func(n interface{}) string {
+			switch v := n.(type) {
+			case int64:
+				return fmt.Sprintf("%d", v)
+			case float64:
+				return fmt.Sprintf("%.0f", v)
+			default:
+				return fmt.Sprintf("%v", v)
 			}
-			id = existing.ID
-		}
-		providerIDs[p.id] = id
+		},
+		"formatDateTime": func(t time.Time) string {
+			if t.IsZero() {
+				return "-"
+			}
+			return t.Format("1/2 15:04")
+		},
+		"getUsageClass": func(percentage float64) string {
+			if percentage < 50 {
+				return "progress-low"
+			}
+			if percentage < 80 {
+				return "progress-medium"
+			}
+			return "progress-high"
+		},
+		"isStale": func(t *time.Time) bool {
+			if t == nil || t.IsZero() {
+				return true
+			}
+			return time.Since(*t) > 2*time.Hour
+		},
+		"float64": func(n int64) float64 {
+			return float64(n)
+		},
+		"divf": func(a, b float64) float64 {
+			if b == 0 {
+				return 0
+			}
+			return a / b
+		},
+		"mul": func(a, b int) int {
+			return a * b
+		},
+		"mod": func(a, b int) int {
+			return a % b
+		},
+		"dict": func(values ...interface{}) map[string]interface{} {
+			result := make(map[string]interface{})
+			for i := 0; i < len(values)-1; i += 2 {
+				if key, ok := values[i].(string); ok {
+					result[key] = values[i+1]
+				}
+			}
+			return result
+		},
 	}
-	
-	// Seed usage snapshots (24h history)
-	limitOpenAI := float64(100000)
-	limitAnthropic := float64(100000)
-	
-	for i := 24; i >= 0; i-- {
-		t := now.Add(-time.Duration(i) * time.Hour)
-		
-		// OpenAI: 45% usage trend
-		_, err := s.CreateUsageSnapshot(&store.UsageSnapshot{
-			ProviderID:  providerIDs["openai"],
-			Metric:      "usage",
-			Used:        float64(45000 - i*500),
-			Limit:       &limitOpenAI,
-			ResetAt:     &resetAt,
-			CollectedAt: t,
-			RawJSON:     `{"tokens": 45000}`,
-		})
-		if err != nil {
-			return fmt.Errorf("creating OpenAI snapshot: %w", err)
-		}
-		
-		// Anthropic: 82% usage trend
-		_, err = s.CreateUsageSnapshot(&store.UsageSnapshot{
-			ProviderID:  providerIDs["anthropic"],
-			Metric:      "usage",
-			Used:        float64(82000 - i*300),
-			Limit:       &limitAnthropic,
-			ResetAt:     &resetAt,
-			CollectedAt: t,
-			RawJSON:     `{"tokens": 82000}`,
-		})
-		if err != nil {
-			return fmt.Errorf("creating Anthropic snapshot: %w", err)
+
+	allContent := string(layout) + string(dashboard) + 
+		string(providerCard) + string(trendChart) + string(errorState)
+
+	tmpl, err := template.New("layout").Funcs(funcMap).Parse(allContent)
+	if err != nil {
+		log.Fatalf("템플릿 파싱 실패: %v", err)
+	}
+
+	return tmpl
+}
+
+func handleDashboard(tmpl *template.Template, w http.ResponseWriter, r *http.Request) {
+	currentState.RLock()
+	providers := currentState.Providers
+	lastError := currentState.LastError
+	currentState.RUnlock()
+
+	data := DashboardData{
+		Title:     "AI 사용량 대시보드",
+		Providers: providers,
+		Range:     "24h", // default
+	}
+
+	// Check for errors
+	if lastError != nil {
+		data.HasError = true
+		data.ErrorMessage = lastError.Error()
+	} else if len(providers) == 0 {
+		data.HasError = true
+		data.ErrorMessage = "수집된 데이터가 없습니다"
+	}
+
+	// Load trend data
+	rangeParam := r.URL.Query().Get("range")
+	if rangeParam == "" {
+		rangeParam = "24h"
+	}
+	data.Range = rangeParam
+
+	currentState.RLock()
+	if trends, ok := currentState.Trends[rangeParam]; ok {
+		data.TrendData = &TrendsResponse{Points: trends}
+	}
+	currentState.RUnlock()
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := tmpl.ExecuteTemplate(w, "layout", data); err != nil {
+		log.Printf("템플릿 실행 오류: %v", err)
+		http.Error(w, "내부 서버 오류", http.StatusInternalServerError)
+	}
+}
+
+func handleAPICurrent(w http.ResponseWriter, r *http.Request) {
+	currentState.RLock()
+	providers := currentState.Providers
+	currentState.RUnlock()
+
+	response := CurrentResponse{Providers: providers}
+	writeJSON(w, response)
+}
+
+func handleAPITrends(w http.ResponseWriter, r *http.Request) {
+	rangeParam := r.URL.Query().Get("range")
+	if rangeParam == "" {
+		rangeParam = "24h"
+	}
+
+	if rangeParam != "24h" && rangeParam != "7d" && rangeParam != "30d" {
+		http.Error(w, `{"error": "range must be '24h', '7d', or '30d'"}`, http.StatusBadRequest)
+		return
+	}
+
+	currentState.RLock()
+	points := currentState.Trends[rangeParam]
+	currentState.RUnlock()
+
+	if points == nil {
+		points = []TrendPoint{}
+	}
+
+	response := TrendsResponse{Points: points}
+	writeJSON(w, response)
+}
+
+func handleAPIProviders(w http.ResponseWriter, r *http.Request) {
+	currentState.RLock()
+	providers := currentState.Providers
+	currentState.RUnlock()
+
+	infos := make([]ProviderInfo, len(providers))
+	for i, p := range providers {
+		infos[i] = ProviderInfo{
+			ID:      p.ID,
+			Name:    p.Name,
+			Enabled: true,
 		}
 	}
+
+	response := ProvidersResponse{Providers: infos}
+	writeJSON(w, response)
+}
+
+func handleHealthz(w http.ResponseWriter, r *http.Request) {
+	currentState.RLock()
+	lastError := currentState.LastError
+	providers := currentState.Providers
+	currentState.RUnlock()
+
+	status := "ok"
+	if lastError != nil {
+		status = "degraded"
+	}
+	if len(providers) == 0 && lastError != nil {
+		status = "error"
+	}
+
+	response := HealthResponse{Status: status}
+	writeJSON(w, response)
+}
+
+func writeJSON(w http.ResponseWriter, data interface{}) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	if err := json.NewEncoder(w).Encode(data); err != nil {
+		log.Printf("JSON 인코딩 오류: %v", err)
+		http.Error(w, `{"error": "internal error"}`, http.StatusInternalServerError)
+	}
+}
+
+// Background data collector (example - replace with actual API calls)
+func startDataCollector() {
+	ticker := time.NewTicker(30 * time.Second)
+	go func() {
+		for range ticker.C {
+			collectData()
+		}
+	}()
+}
+
+func collectData() {
+	// TODO: Implement actual data collection from AI providers
+	// This is a placeholder for demonstration
 	
-	return nil
+	currentState.Lock()
+	defer currentState.Unlock()
+	
+	// Example: Update with real provider data
+	// currentState.Providers = fetchFromProviders()
+	// currentState.Trends["24h"] = fetchTrends("24h")
+	// currentState.Trends["7d"] = fetchTrends("7d")
+	
+	now := time.Now()
+	if len(currentState.Providers) == 0 {
+		// Sample data for testing
+		currentState.Providers = []Provider{
+			{
+				ID:          "openai",
+				Name:        "OpenAI",
+				Used:        45000,
+				Limit:       100000,
+				Remaining:   55000,
+				ResetAt:     now.Add(24 * time.Hour),
+				CollectedAt: &now,
+				UpdatedAt:   now,
+			},
+			{
+				ID:          "anthropic",
+				Name:        "Anthropic",
+				Used:        82000,
+				Limit:       100000,
+				Remaining:   18000,
+				ResetAt:     now.Add(24 * time.Hour),
+				CollectedAt: &now,
+				UpdatedAt:   now,
+			},
+			{
+				ID:          "google",
+				Name:        "Google AI",
+				Used:        23000,
+				Limit:       50000,
+				Remaining:   27000,
+				ResetAt:     now.Add(24 * time.Hour),
+				CollectedAt: &now,
+				UpdatedAt:   now,
+			},
+		}
+		
+		// Sample trend data
+		var points24h, points7d, points30d []TrendPoint
+		
+		// 24h data (hourly)
+		for i := 0; i < 24; i++ {
+			t := now.Add(time.Duration(-i) * time.Hour)
+			for _, p := range currentState.Providers {
+				points24h = append(points24h, TrendPoint{
+					CollectedAt: t,
+					ProviderID:  p.ID,
+					Metric:      "usage",
+					Used:        p.Used - int64(i*1000),
+					Limit:       p.Limit,
+				})
+			}
+		}
+		
+		// 7d data (daily)
+		for i := 0; i < 7; i++ {
+			t := now.AddDate(0, 0, -i)
+			for _, p := range currentState.Providers {
+				points7d = append(points7d, TrendPoint{
+					CollectedAt: t,
+					ProviderID:  p.ID,
+					Metric:      "usage",
+					Used:        p.Used - int64(i*5000),
+					Limit:       p.Limit,
+				})
+			}
+		}
+		
+		// 30d data (daily)
+		for i := 0; i < 30; i++ {
+			t := now.AddDate(0, 0, -i)
+			for _, p := range currentState.Providers {
+				points30d = append(points30d, TrendPoint{
+					CollectedAt: t,
+					ProviderID:  p.ID,
+					Metric:      "usage",
+					Used:        p.Used - int64(i*1000),
+					Limit:       p.Limit,
+				})
+			}
+		}
+		
+		currentState.Trends["24h"] = points24h
+		currentState.Trends["7d"] = points7d
+		currentState.Trends["30d"] = points30d
+	}
 }
