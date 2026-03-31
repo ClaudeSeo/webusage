@@ -84,9 +84,9 @@ func initSampleData() {
 		{
 			ID:          "openai",
 			Name:        "OpenAI",
-			Used:        45000,
-			Limit:       100000,
-			Remaining:   55000,
+			Used:        int64(45000),
+			Limit:       int64(100000),
+			Remaining:   int64(55000),
 			ResetAt:     time.Date(now.Year(), now.Month()+1, 1, 0, 0, 0, 0, time.UTC),
 			CollectedAt: &now,
 			LastError:   "",
@@ -95,9 +95,9 @@ func initSampleData() {
 		{
 			ID:          "anthropic",
 			Name:        "Anthropic",
-			Used:        82000,
-			Limit:       100000,
-			Remaining:   18000,
+			Used:        int64(82000),
+			Limit:       int64(100000),
+			Remaining:   int64(18000),
 			ResetAt:     time.Date(now.Year(), now.Month()+1, 1, 0, 0, 0, 0, time.UTC),
 			CollectedAt: &now,
 			LastError:   "",
@@ -284,10 +284,10 @@ func loadTemplates() *template.Template {
 			}
 			return a / b
 		},
-		"mul": func(a, b int) int {
+		"mul": func(a, b int64) int64 {
 			return a * b
 		},
-		"mod": func(a, b int) int {
+		"mod": func(a, b int64) int64 {
 			return a % b
 		},
 		"dict": func(values ...interface{}) map[string]interface{} {
