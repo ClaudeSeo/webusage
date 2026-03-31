@@ -72,31 +72,7 @@
     {{/* Provider Cards Grid */}}
     <div class="dashboard-grid">
         {{range .Providers}}
-            {{if .LastError}}
-                {{template "providerCard" dict 
-                    "ID" .ID
-                    "Name" .Name
-                    "Used" .Used
-                    "Limit" .Limit
-                    "Remaining" .Remaining
-                    "ResetAt" .ResetAt
-                    "CollectedAt" .CollectedAt
-                    "UpdatedAt" .UpdatedAt
-                    "LastError" .LastError
-                }}
-            {{else}}
-                {{template "providerCard" dict 
-                    "ID" .ID
-                    "Name" .Name
-                    "Used" .Used
-                    "Limit" .Limit
-                    "Remaining" .Remaining
-                    "ResetAt" .ResetAt
-                    "CollectedAt" .CollectedAt
-                    "UpdatedAt" .UpdatedAt
-                    "LastError" ""
-                }}
-            {{end}}
+            {{template "providerCard" .}}
         {{end}}
     </div>
     
