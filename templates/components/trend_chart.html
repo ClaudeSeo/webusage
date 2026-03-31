@@ -22,15 +22,6 @@
 
 <script>
 let trendChartInstance = null;
-const providerColors = {
-    {{- $first := true}}
-    {{- range .Providers}}
-    {{- if not $first}},{{end}}
-    '{{.ID}}': 'hsl({{mul (toInt64 (index $ 0)) 137 | mod 360}}, 70%, 60%)'
-    {{- $first = false}}
-    {{- end}}
-};
-
 function getProviderColor(providerId, index) {
     const hue = (index * 137.5) % 360;
     return `hsl(${hue}, 70%, 60%)`;
