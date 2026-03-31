@@ -76,9 +76,9 @@
                 {{template "providerCard" dict 
                     "ID" .ID
                     "Name" .Name
-                    "Used" .Used
-                    "Limit" .Limit
-                    "Remaining" .Remaining
+                    "Used" (.Used | printf "%d")
+                    "Limit" (.Limit | printf "%d")
+                    "Remaining" (.Remaining | printf "%d")
                     "ResetAt" .ResetAt
                     "CollectedAt" .CollectedAt
                     "UpdatedAt" .UpdatedAt
@@ -88,9 +88,9 @@
                 {{template "providerCard" dict 
                     "ID" .ID
                     "Name" .Name
-                    "Used" .Used
-                    "Limit" .Limit
-                    "Remaining" .Remaining
+                    "Used" (.Used | printf "%d")
+                    "Limit" (.Limit | printf "%d")
+                    "Remaining" (.Remaining | printf "%d")
                     "ResetAt" .ResetAt
                     "CollectedAt" .CollectedAt
                     "UpdatedAt" .UpdatedAt
