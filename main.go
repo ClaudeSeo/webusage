@@ -20,6 +20,7 @@ type Provider struct {
 	Limit         int64      `json:"limit"`
 	Remaining     int64      `json:"remaining"`
 	ResetAt       time.Time  `json:"reset_at"`
+	CollectedAt   *time.Time `json:"collected_at,omitempty"`
 	LastSuccessAt *time.Time `json:"last_success_at,omitempty"`
 	LastError     string     `json:"last_error,omitempty"`
 	UpdatedAt     time.Time  `json:"updated_at"`
