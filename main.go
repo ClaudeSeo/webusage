@@ -244,15 +244,19 @@ func loadTemplates() *template.Template {
 
 	// Parse templates with custom functions
 	funcMap := template.FuncMap{
-		"formatNumber": func(n interface{}) string {
-			switch v := n.(type) {
-			case int64:
+		"formatNumber": func(n any) string {
+			if v, ok := n.(int64); ok {
 				return fmt.Sprintf("%d", v)
-			case float64:
-				return fmt.Sprintf("%.0f", v)
-			default:
-				return fmt.Sprintf("%v", v)
 			}
+			if v, ok := n.(float64); ok {
+				return fmt.Sprintf("%.0f", v)
+			}
+			return fmt.Sprintf("%v", n)
+		},
+		"toInt": func(s string) int64 {
+			var v int64
+			fmt.Sscanf(s, "%d", &v)
+			return v
 		},
 		"formatDateTime": func(t time.Time) string {
 			if t.IsZero() {

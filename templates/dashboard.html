@@ -250,8 +250,8 @@ document.addEventListener('DOMContentLoaded', function() {
                     {{if $i}},{{end}}
                     {
                         id: '{{$p.ID}}',
-                        used: {{$p.Used}},
-                        limit: {{$p.Limit}},
+                        used: {{printf "%d" $p.Used}},
+                        limit: {{printf "%d" $p.Limit}},
                         collectedAt: '{{if $p.CollectedAt}}{{formatDateTime $p.CollectedAt}}{{end}}',
                         lastError: '{{if $p.LastError}}{{$p.LastError}}{{end}}'
                     }

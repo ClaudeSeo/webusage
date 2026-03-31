@@ -6,7 +6,7 @@
             <span class="card-status status-error">에러</span>
         {{else if isStale .CollectedAt}}
             <span class="card-status status-warning">오래됨</span>
-        {{else if ge (divf (mul (float64 .Used) 100) (float64 .Limit)) 80}}
+        {{else if ge (divf (mul (.Used | printf "%d" | toInt) 100) (.Limit | printf "%d" | toInt)) 80}}
             <span class="card-status status-warning">주의</span>
         {{else}}
             <span class="card-status status-ok">정상</span>
@@ -15,17 +15,17 @@
     
     <div class="metric-row">
         <span class="metric-label">사용량</span>
-        <span class="metric-value">{{formatNumber .Used}} / {{formatNumber .Limit}}</span>
+        <span class="metric-value">{{.Used | printf "%d"}} / {{.Limit | printf "%d"}}</span>
     </div>
     
     <div class="metric-row">
         <span class="metric-label">잔여량</span>
-        <span class="metric-value">{{formatNumber .Remaining}}</span>
+        <span class="metric-value">{{.Remaining | printf "%d"}}</span>
     </div>
     
     <div class="metric-row">
         <span class="metric-label">사용률</span>
-        <span class="metric-value">{{printf "%.1f" (divf (mul (float64 .Used) 100) (float64 .Limit))}}%</span>
+        <span class="metric-value">{{divf (mul (.Used | printf "%d" | toInt) 100) (.Limit | printf "%d" | toInt) | printf "%.1f"}}%</span>
     </div>
     
     <div class="progress-container">
