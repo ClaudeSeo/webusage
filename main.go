@@ -323,6 +323,10 @@ func handleDashboard(tmpl *template.Template, w http.ResponseWriter, r *http.Req
 	currentState.RLock()
 	providers := currentState.Providers
 	lastError := currentState.LastError
+	log.Printf("📋 Rendering dashboard with %d providers", len(providers))
+	for i, p := range providers {
+		log.Printf("  [%d] %s: used=%d, limit=%d", i, p.Name, p.Used, p.Limit)
+	}
 	currentState.RUnlock()
 
 	data := DashboardData{
