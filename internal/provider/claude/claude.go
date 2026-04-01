@@ -26,47 +26,59 @@ const (
 	keychainService = "Claude Code-credentials"
 )
 
-// claudeCredentials는 ~/.claude/.credentials.json 파일 구조
+// claudeCredentials는 파일/Keychain 공통 구조
+// 파일(~/.claude/.credentials.json)과 Keychain 모두 동일한 claudeAiOauth camelCase 구조
 type claudeCredentials struct {
-	OAuth *claudeOAuthCredential `json:"oauth"`
+	ClaudeAiOauth *claudeOAuthData `json:"claudeAiOauth"`
+	OrgUUID       string           `json:"organizationUuid,omitempty"`
 }
 
-// claudeOAuthCredential는 Claude CLI OAuth 토큰 정보
-type claudeOAuthCredential struct {
-	AccessToken  string `json:"access_token"`
-	RefreshToken string `json:"refresh_token,omitempty"`
-	ExpiresAt    *int64 `json:"expires_at,omitempty"` // Unix timestamp (밀리초)
+// claudeOAuthData는 Claude OAuth 토큰 정보 (camelCase)
+type claudeOAuthData struct {
+	AccessToken      string   `json:"accessToken"`
+	RefreshToken     string   `json:"refreshToken,omitempty"`
+	ExpiresAt        *int64   `json:"expiresAt,omitempty"` // Unix 밀리초
+	Scopes           []string `json:"scopes,omitempty"`
+	SubscriptionType string   `json:"subscriptionType,omitempty"`
+	RateLimitTier    string   `json:"rateLimitTier,omitempty"`
 }
 
 // usageResponse는 Claude OAuth usage API 응답 구조
 // GET /api/oauth/usage (anthropic-beta: oauth-2025-04-20)
 type usageResponse struct {
-	Object string       `json:"object"`
-	Data   []usageEntry `json:"data"`
+	FiveHour       *usageWindow `json:"five_hour,omitempty"`
+	SevenDay       *usageWindow `json:"seven_day,omitempty"`
+	SevenDaySonnet *usageWindow `json:"seven_day_sonnet,omitempty"`
+	ExtraUsage     *extraUsage  `json:"extra_usage,omitempty"`
 }
 
-type usageEntry struct {
-	Timestamp    int64  `json:"timestamp"`
-	InputTokens  int64  `json:"input_tokens"`
-	OutputTokens int64  `json:"output_tokens"`
-	Model        string `json:"model"`
+type usageWindow struct {
+	Utilization float64 `json:"utilization"` // 0.0 ~ 1.0
+	ResetsAt    string  `json:"resets_at"`   // ISO8601
 }
 
-// subscriptionResponse는 Claude subscription API 응답 구조
-type subscriptionResponse struct {
-	Object           string `json:"object"`
-	SubscriptionType string `json:"subscription_type"`
-	RateLimitTier    string `json:"rate_limit_tier"`
-	PlanName         string `json:"plan_name,omitempty"`
+type extraUsage struct {
+	IsEnabled    bool    `json:"is_enabled"`
+	UsedCredits  float64 `json:"used_credits"`
+	MonthlyLimit float64 `json:"monthly_limit"`
+}
+
+// tokenRefreshResponse는 token refresh 응답 (snake_case)
+type tokenRefreshResponse struct {
+	AccessToken  string `json:"access_token"`
+	RefreshToken string `json:"refresh_token,omitempty"`
+	ExpiresIn    int64  `json:"expires_in"` // 초 단위
 }
 
 // ClaudeProvider는 Claude/Anthropic OAuth 기반 usage provider
 type ClaudeProvider struct {
-	httpClient *http.Client
-	credStore  oauth.CredentialStore
-	baseURL    string
-	tokenURL   string
-	logger     *log.Logger
+	httpClient       *http.Client
+	credStore        oauth.CredentialStore
+	baseURL          string
+	tokenURL         string
+	logger           *log.Logger
+	subscriptionType string // 자격증명에서 추출 (team, pro 등)
+	rateLimitTier    string // 자격증명에서 추출 (default_claude_max_5x 등)
 }
 
 // Option은 ClaudeProvider 설정 함수
@@ -201,73 +213,102 @@ func (p *ClaudeProvider) FetchUsage(ctx context.Context) ([]provider.UsagePoint,
 
 	rawBytes, _ := json.Marshal(usageResp)
 	now := time.Now()
+	var points []provider.UsagePoint
 
-	var totalInput, totalOutput int64
-	for _, entry := range usageResp.Data {
-		totalInput += entry.InputTokens
-		totalOutput += entry.OutputTokens
-	}
-	total := float64(totalInput + totalOutput)
-
-	return []provider.UsagePoint{
-		{
-			Metric:      "tokens",
-			Used:        total,
+	// 5시간 세션 사용률 (0.0~1.0 → 퍼센트)
+	if usageResp.FiveHour != nil {
+		limit := 100.0
+		resetAt := parseISO8601(usageResp.FiveHour.ResetsAt)
+		points = append(points, provider.UsagePoint{
+			Metric:      "session",
+			Used:        usageResp.FiveHour.Utilization * 100,
+			Limit:       &limit,
+			ResetAt:     resetAt,
 			CollectedAt: now,
 			RawJSON:     string(rawBytes),
-		},
-	}, nil
+		})
+	}
+
+	// 7일 주간 사용률
+	if usageResp.SevenDay != nil {
+		limit := 100.0
+		resetAt := parseISO8601(usageResp.SevenDay.ResetsAt)
+		points = append(points, provider.UsagePoint{
+			Metric:      "weekly",
+			Used:        usageResp.SevenDay.Utilization * 100,
+			Limit:       &limit,
+			ResetAt:     resetAt,
+			CollectedAt: now,
+		})
+	}
+
+	// 7일 Sonnet 사용률
+	if usageResp.SevenDaySonnet != nil {
+		limit := 100.0
+		resetAt := parseISO8601(usageResp.SevenDaySonnet.ResetsAt)
+		points = append(points, provider.UsagePoint{
+			Metric:      "weekly_sonnet",
+			Used:        usageResp.SevenDaySonnet.Utilization * 100,
+			Limit:       &limit,
+			ResetAt:     resetAt,
+			CollectedAt: now,
+		})
+	}
+
+	// Extra usage (크레딧)
+	if usageResp.ExtraUsage != nil && usageResp.ExtraUsage.IsEnabled {
+		limit := usageResp.ExtraUsage.MonthlyLimit
+		points = append(points, provider.UsagePoint{
+			Metric:      "extra_credits",
+			Used:        usageResp.ExtraUsage.UsedCredits,
+			Limit:       &limit,
+			CollectedAt: now,
+		})
+	}
+
+	return points, nil
 }
 
-// FetchSubscription은 Claude 구독 정보를 조회합니다
+// parseISO8601은 ISO8601 문자열을 *time.Time으로 변환합니다
+func parseISO8601(s string) *time.Time {
+	if s == "" {
+		return nil
+	}
+	t, err := time.Parse(time.RFC3339, s)
+	if err != nil {
+		return nil
+	}
+	return &t
+}
+
+// FetchSubscription은 자격증명에서 추출한 구독 정보를 반환합니다
 func (p *ClaudeProvider) FetchSubscription(ctx context.Context) (*provider.SubscriptionInfo, error) {
-	token, err := p.getValidToken(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("getting valid token: %w", err)
+	// 토큰 로드 시 subscriptionType, rateLimitTier를 이미 추출함
+	if p.subscriptionType == "" {
+		// 아직 로드되지 않았으면 한번 시도
+		if _, err := p.loadToken(ctx); err != nil {
+			return nil, err
+		}
 	}
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, p.baseURL+"/v1/account/subscription", nil)
-	if err != nil {
-		return nil, fmt.Errorf("creating subscription request: %w", err)
-	}
-	req.Header.Set("Authorization", "Bearer "+token.AccessToken)
-	req.Header.Set("anthropic-version", "2023-06-01")
-
-	resp, err := p.httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("subscription request failed: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("subscription endpoint returned %d", resp.StatusCode)
-	}
-
-	var subResp subscriptionResponse
-	if err := json.NewDecoder(resp.Body).Decode(&subResp); err != nil {
-		return nil, fmt.Errorf("decoding subscription response: %w", err)
-	}
-
-	rawBytes, _ := json.Marshal(subResp)
-
 	return &provider.SubscriptionInfo{
 		ProviderName:     p.Name(),
-		PlanName:         subResp.PlanName,
-		SubscriptionType: subResp.SubscriptionType,
-		RateLimitTier:    subResp.RateLimitTier,
-		RawJSON:          string(rawBytes),
+		PlanName:         p.subscriptionType,
+		SubscriptionType: p.subscriptionType,
+		RateLimitTier:    p.rateLimitTier,
 	}, nil
 }
 
 // loadToken은 자격증명을 우선순위에 따라 로드합니다:
-// 1. ~/.claude/.credentials.json (Claude CLI OAuth 토큰)
-// 2. macOS Keychain "Claude Code-credentials"
+// 1. ~/.claude/.credentials.json (claudeAiOauth 구조)
+// 2. macOS Keychain "Claude Code-credentials" (동일 구조)
 // 3. credential store (DB/파일)
 func (p *ClaudeProvider) loadToken(ctx context.Context) (*oauth.Token, error) {
-	// 1순위: ~/.claude/.credentials.json (Claude CLI)
-	var creds claudeCredentials
-	if err := credfinder.ReadJSONCredential(credentialPath, &creds); err == nil {
-		if token := credToToken(creds.OAuth); token != nil {
+	// 1순위: ~/.claude/.credentials.json
+	var fileCreds claudeCredentials
+	if err := credfinder.ReadJSONCredential(credentialPath, &fileCreds); err == nil {
+		if token := oauthDataToToken(fileCreds.ClaudeAiOauth); token != nil {
+			p.subscriptionType = fileCreds.ClaudeAiOauth.SubscriptionType
+			p.rateLimitTier = fileCreds.ClaudeAiOauth.RateLimitTier
 			return token, nil
 		}
 	}
@@ -276,7 +317,9 @@ func (p *ClaudeProvider) loadToken(ctx context.Context) (*oauth.Token, error) {
 	if raw, err := credfinder.KeychainItem(keychainService, ""); err == nil && raw != "" {
 		var keychainCreds claudeCredentials
 		if jsonErr := json.Unmarshal([]byte(raw), &keychainCreds); jsonErr == nil {
-			if token := credToToken(keychainCreds.OAuth); token != nil {
+			if token := oauthDataToToken(keychainCreds.ClaudeAiOauth); token != nil {
+				p.subscriptionType = keychainCreds.ClaudeAiOauth.SubscriptionType
+				p.rateLimitTier = keychainCreds.ClaudeAiOauth.RateLimitTier
 				return token, nil
 			}
 		}
@@ -292,18 +335,18 @@ func (p *ClaudeProvider) loadToken(ctx context.Context) (*oauth.Token, error) {
 	return nil, nil
 }
 
-// credToToken은 claudeOAuthCredential을 oauth.Token으로 변환합니다
-func credToToken(cred *claudeOAuthCredential) *oauth.Token {
-	if cred == nil || cred.AccessToken == "" {
+// oauthDataToToken은 claudeOAuthData를 oauth.Token으로 변환합니다
+func oauthDataToToken(data *claudeOAuthData) *oauth.Token {
+	if data == nil || data.AccessToken == "" {
 		return nil
 	}
 	token := &oauth.Token{
-		AccessToken:  cred.AccessToken,
-		RefreshToken: cred.RefreshToken,
+		AccessToken:  data.AccessToken,
+		RefreshToken: data.RefreshToken,
 	}
-	// ExpiresAt: Unix 밀리초 → time.Time 변환
-	if cred.ExpiresAt != nil {
-		exp := time.Unix(*cred.ExpiresAt/1000, 0)
+	// ExpiresAt: Unix 밀리초 → time.Time
+	if data.ExpiresAt != nil {
+		exp := time.Unix(*data.ExpiresAt/1000, 0)
 		token.ExpiresAt = &exp
 	}
 	return token

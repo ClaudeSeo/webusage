@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/ClaudeSeo/webusage/internal/oauth"
+	"github.com/ClaudeSeo/webusage/internal/provider"
 )
 
 // mockRoundTripper는 네트워크 없이 HTTP 응답을 흉내내는 mock RoundTripper
@@ -66,18 +67,15 @@ func TestClaudeProvider_Name(t *testing.T) {
 
 func TestClaudeProvider_FetchUsage_Success(t *testing.T) {
 	usageResp := usageResponse{
-		Object: "list",
-		Data: []usageEntry{
-			{InputTokens: 1000, OutputTokens: 500},
-			{InputTokens: 2000, OutputTokens: 800},
-		},
+		FiveHour:       &usageWindow{Utilization: 0.45, ResetsAt: "2026-04-01T15:00:00Z"},
+		SevenDay:       &usageWindow{Utilization: 0.72, ResetsAt: "2026-04-07T00:00:00Z"},
+		SevenDaySonnet: &usageWindow{Utilization: 0.30, ResetsAt: "2026-04-07T00:00:00Z"},
+		ExtraUsage:     &extraUsage{IsEnabled: true, UsedCredits: 5.50, MonthlyLimit: 100.0},
 	}
 	body, _ := json.Marshal(usageResp)
 
 	client := mockClient(func(req *http.Request) (int, string) {
-		// 새 OAuth usage 엔드포인트 경로 확인
 		if req.URL.Path == "/api/oauth/usage" {
-			// anthropic-beta 헤더 검증
 			if req.Header.Get("anthropic-beta") != "oauth-2025-04-20" {
 				return http.StatusBadRequest, `{"error":"missing beta header"}`
 			}
@@ -103,12 +101,13 @@ func TestClaudeProvider_FetchUsage_Success(t *testing.T) {
 	if err != nil {
 		t.Fatalf("FetchUsage() error = %v", err)
 	}
-	if len(points) != 1 {
-		t.Fatalf("FetchUsage() returned %d points, want 1", len(points))
+	// session(5h) + weekly(7d) + weekly_sonnet + extra_credits = 4개
+	if len(points) != 4 {
+		t.Fatalf("FetchUsage() returned %d points, want 4", len(points))
 	}
-	// 총 토큰: (1000+500) + (2000+800) = 4300
-	if points[0].Used != 4300 {
-		t.Errorf("FetchUsage() Used = %v, want 4300", points[0].Used)
+	// session utilization 45%
+	if points[0].Metric != "session" || points[0].Used != 45.0 {
+		t.Errorf("session point = %v/%v, want session/45.0", points[0].Metric, points[0].Used)
 	}
 }
 
@@ -142,21 +141,7 @@ func TestClaudeProvider_FetchUsage_GracefulDegradation(t *testing.T) {
 }
 
 func TestClaudeProvider_FetchSubscription(t *testing.T) {
-	subResp := subscriptionResponse{
-		Object:           "subscription",
-		SubscriptionType: "paid",
-		RateLimitTier:    "standard",
-		PlanName:         "Claude Pro",
-	}
-	body, _ := json.Marshal(subResp)
-
-	client := mockClient(func(req *http.Request) (int, string) {
-		if req.URL.Path == "/v1/account/subscription" {
-			return http.StatusOK, string(body)
-		}
-		return http.StatusNotFound, `{"error":"not found"}`
-	})
-
+	// FetchSubscription은 자격증명에서 추출한 정보를 반환 (API 호출 없음)
 	store := newMockCredentialStore()
 	exp := time.Now().Add(time.Hour)
 	_ = store.Save(context.Background(), "claude", &oauth.Token{
@@ -164,21 +149,22 @@ func TestClaudeProvider_FetchSubscription(t *testing.T) {
 		ExpiresAt:   &exp,
 	})
 
-	p := New(
-		WithBaseURL("http://mock"),
-		WithHTTPClient(client),
-		WithCredentialStore(store),
-	)
+	cp := &ClaudeProvider{
+		subscriptionType: "team",
+		rateLimitTier:    "default_claude_max_5x",
+		credStore:        store,
+	}
+	var p provider.Provider = cp
 
 	info, err := p.FetchSubscription(context.Background())
 	if err != nil {
 		t.Fatalf("FetchSubscription() error = %v", err)
 	}
-	if info.SubscriptionType != "paid" {
-		t.Errorf("SubscriptionType = %q, want %q", info.SubscriptionType, "paid")
+	if info.SubscriptionType != "team" {
+		t.Errorf("SubscriptionType = %q, want %q", info.SubscriptionType, "team")
 	}
-	if info.PlanName != "Claude Pro" {
-		t.Errorf("PlanName = %q, want %q", info.PlanName, "Claude Pro")
+	if info.RateLimitTier != "default_claude_max_5x" {
+		t.Errorf("RateLimitTier = %q, want %q", info.RateLimitTier, "default_claude_max_5x")
 	}
 }
 
@@ -212,7 +198,7 @@ func TestClaudeProvider_TokenRefresh(t *testing.T) {
 			if authHeader != "Bearer new-access-token" {
 				return http.StatusUnauthorized, `{"error":"unauthorized"}`
 			}
-			b, _ := json.Marshal(usageResponse{Object: "list", Data: []usageEntry{}})
+			b, _ := json.Marshal(usageResponse{})
 			return http.StatusOK, string(b)
 		default:
 			return http.StatusNotFound, `{"error":"not found"}`
