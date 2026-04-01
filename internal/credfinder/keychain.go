@@ -9,14 +9,14 @@ import (
 )
 
 // KeychainItem은 macOS Keychain에서 generic password를 읽습니다.
-// `security find-generic-password -s <service> -a <account> -w` 실행
+// account가 비어있으면 -a 플래그를 생략합니다 (Claude Code-credentials 등)
 func KeychainItem(service, account string) (string, error) {
-	out, err := exec.Command(
-		"security", "find-generic-password",
-		"-s", service,
-		"-a", account,
-		"-w",
-	).Output()
+	args := []string{"find-generic-password", "-s", service}
+	if account != "" {
+		args = append(args, "-a", account)
+	}
+	args = append(args, "-w")
+	out, err := exec.Command("security", args...).Output()
 	if err != nil {
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) && exitErr.ExitCode() == 44 {
@@ -29,14 +29,14 @@ func KeychainItem(service, account string) (string, error) {
 }
 
 // KeychainInternetPassword는 macOS Keychain에서 internet password를 읽습니다.
-// `security find-internet-password -s <server> -a <account> -w` 실행
+// account가 비어있으면 -a 플래그를 생략합니다
 func KeychainInternetPassword(server, account string) (string, error) {
-	out, err := exec.Command(
-		"security", "find-internet-password",
-		"-s", server,
-		"-a", account,
-		"-w",
-	).Output()
+	args := []string{"find-internet-password", "-s", server}
+	if account != "" {
+		args = append(args, "-a", account)
+	}
+	args = append(args, "-w")
+	out, err := exec.Command("security", args...).Output()
 	if err != nil {
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) && exitErr.ExitCode() == 44 {

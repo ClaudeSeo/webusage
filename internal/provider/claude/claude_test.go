@@ -95,6 +95,7 @@ func TestClaudeProvider_FetchUsage_Success(t *testing.T) {
 		WithBaseURL("http://mock"),
 		WithHTTPClient(client),
 		WithCredentialStore(store),
+		WithSkipSystemCreds(),
 	)
 
 	points, err := p.FetchUsage(context.Background())
@@ -128,6 +129,7 @@ func TestClaudeProvider_FetchUsage_GracefulDegradation(t *testing.T) {
 		WithBaseURL("http://mock"),
 		WithHTTPClient(client),
 		WithCredentialStore(store),
+		WithSkipSystemCreds(),
 	)
 
 	points, err := p.FetchUsage(context.Background())
@@ -219,6 +221,7 @@ func TestClaudeProvider_TokenRefresh(t *testing.T) {
 		WithTokenURL("http://mock/v1/oauth/token"),
 		WithHTTPClient(client),
 		WithCredentialStore(store),
+		WithSkipSystemCreds(),
 	)
 
 	_, err := p.FetchUsage(context.Background())
@@ -238,7 +241,7 @@ func TestClaudeProvider_NeedsAuth(t *testing.T) {
 			AccessToken: "valid-token",
 			ExpiresAt:   &exp,
 		})
-		p := New(WithCredentialStore(store))
+		p := New(WithCredentialStore(store), WithSkipSystemCreds())
 		if p.NeedsAuth() {
 			t.Error("NeedsAuth() should be false when valid token exists")
 		}
@@ -251,7 +254,7 @@ func TestClaudeProvider_NeedsAuth(t *testing.T) {
 			AccessToken: "expired-token",
 			ExpiresAt:   &exp,
 		})
-		p := New(WithCredentialStore(store))
+		p := New(WithCredentialStore(store), WithSkipSystemCreds())
 		if !p.NeedsAuth() {
 			t.Error("NeedsAuth() should be true when token is expired")
 		}
@@ -277,7 +280,7 @@ func TestClaudeProvider_DiscoverCredentials(t *testing.T) {
 	})
 
 	t.Run("자격증명 없음", func(t *testing.T) {
-		p := New() // credential store 없음, CLI 파일 없음 가정
+		p := New(WithSkipSystemCreds()) // system creds 건너뛰기
 		found, err := p.DiscoverCredentials(context.Background())
 		if err != nil {
 			t.Fatalf("DiscoverCredentials() error = %v", err)
@@ -290,7 +293,7 @@ func TestClaudeProvider_DiscoverCredentials(t *testing.T) {
 
 func TestClaudeProvider_RefreshAuth(t *testing.T) {
 	t.Run("토큰 없음", func(t *testing.T) {
-		p := New()
+		p := New(WithSkipSystemCreds())
 		err := p.RefreshAuth(context.Background())
 		if err == nil {
 			t.Error("RefreshAuth() should return error when no credentials found")
@@ -304,7 +307,7 @@ func TestClaudeProvider_RefreshAuth(t *testing.T) {
 			AccessToken: "valid-token",
 			ExpiresAt:   &exp,
 		})
-		p := New(WithCredentialStore(store))
+		p := New(WithCredentialStore(store), WithSkipSystemCreds())
 		if err := p.RefreshAuth(context.Background()); err != nil {
 			t.Errorf("RefreshAuth() unexpected error = %v", err)
 		}

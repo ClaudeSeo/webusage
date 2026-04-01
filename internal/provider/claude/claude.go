@@ -79,6 +79,7 @@ type ClaudeProvider struct {
 	logger           *log.Logger
 	subscriptionType string // 자격증명에서 추출 (team, pro 등)
 	rateLimitTier    string // 자격증명에서 추출 (default_claude_max_5x 등)
+	skipSystemCreds  bool   // true면 파일/Keychain 건너뛰기 (테스트용)
 }
 
 // Option은 ClaudeProvider 설정 함수
@@ -109,6 +110,13 @@ func WithHTTPClient(client *http.Client) Option {
 func WithCredentialStore(store oauth.CredentialStore) Option {
 	return func(p *ClaudeProvider) {
 		p.credStore = store
+	}
+}
+
+// WithSkipSystemCreds는 파일/Keychain 탐색을 건너뛰고 credStore만 사용합니다 (테스트용)
+func WithSkipSystemCreds() Option {
+	return func(p *ClaudeProvider) {
+		p.skipSystemCreds = true
 	}
 }
 
@@ -303,29 +311,31 @@ func (p *ClaudeProvider) FetchSubscription(ctx context.Context) (*provider.Subsc
 // 2. macOS Keychain "Claude Code-credentials" (동일 구조)
 // 3. credential store (DB/파일)
 func (p *ClaudeProvider) loadToken(ctx context.Context) (*oauth.Token, error) {
-	// 1순위: ~/.claude/.credentials.json
-	var fileCreds claudeCredentials
-	if err := credfinder.ReadJSONCredential(credentialPath, &fileCreds); err == nil {
-		if token := oauthDataToToken(fileCreds.ClaudeAiOauth); token != nil {
-			p.subscriptionType = fileCreds.ClaudeAiOauth.SubscriptionType
-			p.rateLimitTier = fileCreds.ClaudeAiOauth.RateLimitTier
-			return token, nil
-		}
-	}
-
-	// 2순위: macOS Keychain "Claude Code-credentials"
-	if raw, err := credfinder.KeychainItem(keychainService, ""); err == nil && raw != "" {
-		var keychainCreds claudeCredentials
-		if jsonErr := json.Unmarshal([]byte(raw), &keychainCreds); jsonErr == nil {
-			if token := oauthDataToToken(keychainCreds.ClaudeAiOauth); token != nil {
-				p.subscriptionType = keychainCreds.ClaudeAiOauth.SubscriptionType
-				p.rateLimitTier = keychainCreds.ClaudeAiOauth.RateLimitTier
+	if !p.skipSystemCreds {
+		// 1순위: ~/.claude/.credentials.json
+		var fileCreds claudeCredentials
+		if err := credfinder.ReadJSONCredential(credentialPath, &fileCreds); err == nil {
+			if token := oauthDataToToken(fileCreds.ClaudeAiOauth); token != nil {
+				p.subscriptionType = fileCreds.ClaudeAiOauth.SubscriptionType
+				p.rateLimitTier = fileCreds.ClaudeAiOauth.RateLimitTier
 				return token, nil
+			}
+		}
+
+		// 2순위: macOS Keychain "Claude Code-credentials"
+		if raw, err := credfinder.KeychainItem(keychainService, ""); err == nil && raw != "" {
+			var keychainCreds claudeCredentials
+			if jsonErr := json.Unmarshal([]byte(raw), &keychainCreds); jsonErr == nil {
+				if token := oauthDataToToken(keychainCreds.ClaudeAiOauth); token != nil {
+					p.subscriptionType = keychainCreds.ClaudeAiOauth.SubscriptionType
+					p.rateLimitTier = keychainCreds.ClaudeAiOauth.RateLimitTier
+					return token, nil
+				}
 			}
 		}
 	}
 
-	// 3순위: credential store (DB)
+	// 3순위 (또는 skipSystemCreds 시 유일한 소스): credential store (DB)
 	if p.credStore != nil {
 		if token, err := p.credStore.Get(ctx, p.Name()); err == nil && token != nil {
 			return token, nil

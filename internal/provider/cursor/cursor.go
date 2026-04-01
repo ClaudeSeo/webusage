@@ -63,12 +63,13 @@ type oauthTokenResponse struct {
 // CursorProvider는 Cursor OAuth 기반 usage provider
 // SQLite DB 또는 Keychain에서 OAuth 토큰을 탐색합니다
 type CursorProvider struct {
-	dbPath     string
-	accessToken string
-	userID     string
-	baseURL    string
-	httpClient *http.Client
-	logger     *log.Logger
+	dbPath          string
+	accessToken     string
+	userID          string
+	baseURL         string
+	httpClient      *http.Client
+	logger          *log.Logger
+	skipSystemCreds bool // 테스트용: Keychain fallback 건너뛰기
 }
 
 // Option은 CursorProvider 설정 함수
@@ -78,6 +79,13 @@ type Option func(*CursorProvider)
 func WithDBPath(path string) Option {
 	return func(p *CursorProvider) {
 		p.dbPath = path
+	}
+}
+
+// WithSkipSystemCreds는 Keychain fallback을 건너뛰기 (테스트용)
+func WithSkipSystemCreds() Option {
+	return func(p *CursorProvider) {
+		p.skipSystemCreds = true
 	}
 }
 
@@ -163,7 +171,10 @@ func (p *CursorProvider) DiscoverCredentials(_ context.Context) (bool, error) {
 		}
 	}
 
-	// 2순위: macOS Keychain fallback
+	// 2순위: macOS Keychain fallback (skipSystemCreds 시 건너뛰기)
+	if p.skipSystemCreds {
+		return false, nil
+	}
 	token, err := credfinder.KeychainItem("cursor-access-token", "")
 	if err != nil {
 		if errors.Is(err, credfinder.ErrNotFound) || errors.Is(err, credfinder.ErrNotSupported) {

@@ -191,8 +191,8 @@ func TestCursorProvider_DiscoverCredentials_SQLite(t *testing.T) {
 }
 
 func TestCursorProvider_DiscoverCredentials_NotFound(t *testing.T) {
-	// 존재하지 않는 DB 경로
-	p := New(WithDBPath("/nonexistent/path/storage.vscdb"))
+	// 존재하지 않는 DB 경로 + Keychain fallback 건너뛰기
+	p := New(WithDBPath("/nonexistent/path/storage.vscdb"), WithSkipSystemCreds())
 	found, err := p.DiscoverCredentials(context.Background())
 	// 에러가 나거나 found=false여야 합니다
 	if found {
