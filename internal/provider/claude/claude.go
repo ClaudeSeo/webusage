@@ -223,13 +223,13 @@ func (p *ClaudeProvider) FetchUsage(ctx context.Context) ([]provider.UsagePoint,
 	now := time.Now()
 	var points []provider.UsagePoint
 
-	// 5시간 세션 사용률 (0.0~1.0 → 퍼센트)
+	// 5시간 세션 사용률 (API가 0~100 퍼센트로 반환)
 	if usageResp.FiveHour != nil {
 		limit := 100.0
 		resetAt := parseISO8601(usageResp.FiveHour.ResetsAt)
 		points = append(points, provider.UsagePoint{
 			Metric:      "session",
-			Used:        usageResp.FiveHour.Utilization * 100,
+			Used:        usageResp.FiveHour.Utilization,
 			Limit:       &limit,
 			ResetAt:     resetAt,
 			CollectedAt: now,
@@ -243,7 +243,7 @@ func (p *ClaudeProvider) FetchUsage(ctx context.Context) ([]provider.UsagePoint,
 		resetAt := parseISO8601(usageResp.SevenDay.ResetsAt)
 		points = append(points, provider.UsagePoint{
 			Metric:      "weekly",
-			Used:        usageResp.SevenDay.Utilization * 100,
+			Used:        usageResp.SevenDay.Utilization,
 			Limit:       &limit,
 			ResetAt:     resetAt,
 			CollectedAt: now,
@@ -256,7 +256,7 @@ func (p *ClaudeProvider) FetchUsage(ctx context.Context) ([]provider.UsagePoint,
 		resetAt := parseISO8601(usageResp.SevenDaySonnet.ResetsAt)
 		points = append(points, provider.UsagePoint{
 			Metric:      "weekly_sonnet",
-			Used:        usageResp.SevenDaySonnet.Utilization * 100,
+			Used:        usageResp.SevenDaySonnet.Utilization,
 			Limit:       &limit,
 			ResetAt:     resetAt,
 			CollectedAt: now,
