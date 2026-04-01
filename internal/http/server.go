@@ -230,7 +230,9 @@ func (s *Server) handleDashboard(w nethttp.ResponseWriter, r *nethttp.Request) {
 	data := map[string]interface{}{
 		"Providers": views,
 		"Year":      time.Now().Year(),
-		"Interval":  5, // Default interval
+		"Interval":  5,
+		"Range":     "24h",
+		"TrendData": nil,
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
