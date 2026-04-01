@@ -36,6 +36,7 @@ func main() {
 	logger.Info("Starting AI Usage Dashboard",
 		"version", "1.0.0",
 		"db_path", cfg.DBPath,
+		"server_host", cfg.ServerHost,
 		"server_port", cfg.ServerPort)
 
 	// Initialize database
