@@ -109,11 +109,21 @@ func (s *Server) loadTemplates() error {
 			}
 			return "progress-high"
 		},
-		"isStale": func(t *time.Time) bool {
-			if t == nil || t.IsZero() {
+		"isStale": func(t interface{}) bool {
+			switch v := t.(type) {
+			case *time.Time:
+				if v == nil || v.IsZero() {
+					return true
+				}
+				return time.Since(*v) > 2*time.Hour
+			case time.Time:
+				if v.IsZero() {
+					return true
+				}
+				return time.Since(v) > 2*time.Hour
+			default:
 				return true
 			}
-			return time.Since(*t) > 2*time.Hour
 		},
 		"float64": func(n int64) float64 {
 			return float64(n)
@@ -168,15 +178,16 @@ func (s *Server) handleDashboard(w nethttp.ResponseWriter, r *nethttp.Request) {
 	}
 
 	type ProviderView struct {
-		ID        int64
-		Name      string
-		Enabled   bool
-		Metrics   []struct {
-			Metric string
-			Used   float64
-		}
-		LastRun   *time.Time
-		LastError *string
+		ID          int64
+		Name        string
+		Enabled     bool
+		Used        int64
+		Limit       int64
+		Remaining   int64
+		CollectedAt time.Time
+		ResetAt     time.Time
+		UpdatedAt   time.Time
+		LastError   *string
 	}
 
 	var views []ProviderView
@@ -185,18 +196,28 @@ func (s *Server) handleDashboard(w nethttp.ResponseWriter, r *nethttp.Request) {
 			ID:        p.ID,
 			Name:      p.Name,
 			Enabled:   p.Enabled,
-			LastRun:   p.LastRun,
+			UpdatedAt: p.UpdatedAt,
 			LastError: p.LastError,
 		}
 
-		// Get latest metrics
+		// 최신 메트릭에서 Used/Limit/ResetAt 집계
 		snapshots, err := s.store.GetLatestUsageByProvider(p.ID)
 		if err == nil && len(snapshots) > 0 {
 			for _, snap := range snapshots {
-				view.Metrics = append(view.Metrics, struct {
-					Metric string
-					Used   float64
-				}{snap.Metric, snap.Used})
+				view.Used += int64(snap.Used)
+				if snap.Limit != nil {
+					view.Limit += int64(*snap.Limit)
+				}
+				if snap.ResetAt != nil && snap.ResetAt.After(view.ResetAt) {
+					view.ResetAt = *snap.ResetAt
+				}
+				if snap.CollectedAt.After(view.CollectedAt) {
+					view.CollectedAt = snap.CollectedAt
+				}
+			}
+			view.Remaining = view.Limit - view.Used
+			if view.Remaining < 0 {
+				view.Remaining = 0
 			}
 		}
 
