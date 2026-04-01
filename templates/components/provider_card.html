@@ -2,13 +2,14 @@
 <style>
 .provider-card-inner {
     animation: fadeInUp 0.4s ease backwards;
+    padding: 1.5rem;
 }
 
 .provider-card-error {
     margin-top: 1rem;
     padding: 0.75rem;
     background: rgba(239, 68, 68, 0.1);
-    border-radius: 8px;
+    border-radius: var(--radius-md);
     border-left: 3px solid var(--accent-red);
 }
 
@@ -28,7 +29,7 @@
     margin-top: 1rem;
     padding: 0.75rem;
     background: rgba(234, 179, 8, 0.1);
-    border-radius: 8px;
+    border-radius: var(--radius-md);
     border-left: 3px solid var(--accent-yellow);
 }
 
@@ -59,18 +60,45 @@
 .metric-reset {
     color: var(--text-muted);
 }
+
+/* Progress bar - fully rounded */
+.progress-bar-wrapper {
+    margin-top: 0.75rem;
+    background: var(--bg-card);
+    border-radius: var(--radius-full);
+    height: 10px;
+    overflow: hidden;
+}
+
+.progress-bar-inner {
+    height: 100%;
+    border-radius: var(--radius-full);
+    transition: width 0.8s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.progress-bar-inner.low {
+    background: linear-gradient(90deg, var(--accent-green), var(--accent-green-hover));
+}
+
+.progress-bar-inner.medium {
+    background: linear-gradient(90deg, var(--accent-yellow), var(--accent-yellow-hover));
+}
+
+.progress-bar-inner.high {
+    background: linear-gradient(90deg, var(--accent-red), var(--accent-red-hover));
+}
 </style>
 <div class="card provider-card-inner" data-provider-id="{{.ID}}" {{if not .Enabled}}style="opacity: 0.5;"{{end}}>
     <div class="card-header">
         <h3 class="card-title">{{.Name}}</h3>
         {{if not .Enabled}}
-            <span class="card-status" style="background: rgba(107,114,128,0.15); color: #9ca3af; border: 1px solid #374151;">비활성</span>
+            <span class="card-status status-disabled">⚫ 비활성</span>
         {{else if .LastError}}
-            <span class="card-status status-error">에러</span>
+            <span class="card-status status-error">🔴 에러</span>
         {{else if isStale .CollectedAt}}
-            <span class="card-status status-warning">오래됨</span>
+            <span class="card-status status-warning">⚠️ 오래됨</span>
         {{else}}
-            <span class="card-status status-ok">정상</span>
+            <span class="card-status status-ok">✅ 정상</span>
         {{end}}
     </div>
 
@@ -82,8 +110,8 @@
                 <span class="metric-value">{{printf "%.1f" .Used}} / {{formatNumber .Limit}}</span>
             </div>
 
-            <div class="progress-container">
-                <div class="progress-bar {{getUsageClass .Percent}}"
+            <div class="progress-bar-wrapper">
+                <div class="progress-bar-inner {{if lt .Percent 50.0}}low{{else if lt .Percent 80.0}}medium{{else}}high{{end}}"
                      style="width: {{printf "%.1f" .Percent}}%"></div>
             </div>
 
@@ -96,7 +124,7 @@
         </div>
         {{end}}
     {{else}}
-        <div style="padding: 1rem 0; color: var(--text-secondary); font-size: 0.8rem; text-align: center;">
+        <div style="padding: 1.5rem 0; color: var(--text-muted); font-size: 0.875rem; text-align: center;">
             수집된 데이터 없음
         </div>
     {{end}}
