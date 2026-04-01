@@ -16,8 +16,6 @@ import (
 	"github.com/ClaudeSeo/webusage/internal/provider/claude"
 	"github.com/ClaudeSeo/webusage/internal/provider/codex"
 	"github.com/ClaudeSeo/webusage/internal/provider/copilot"
-	"github.com/ClaudeSeo/webusage/internal/provider/cursor"
-	"github.com/ClaudeSeo/webusage/internal/provider/gemini"
 	"github.com/ClaudeSeo/webusage/internal/store"
 )
 
@@ -50,10 +48,10 @@ func main() {
 
 	logger.Info("Database initialized with WAL mode")
 
-	// Setup provider registry — 모든 provider 등록 (기본 disabled)
+	// Setup provider registry + DB 등록 + DB의 enabled 상태 동기화
 	registry := provider.NewRegistry()
 	count := setupProviders(cfg, registry, s, logger)
-	logger.Info("Registered providers (all disabled by default)", "count", count)
+	logger.Info("Registered providers", "count", count)
 
 	// Create context with cancellation
 	ctx, cancel := context.WithCancel(context.Background())
@@ -108,27 +106,14 @@ func main() {
 	logger.Info("Shutdown complete")
 }
 
-// setupProviders는 4개 provider 인스턴스를 생성하고 Registry와 DB에 모두 등록합니다.
-// DiscoverCredentials를 호출하지 않습니다 — 자격증명 탐색은 provider 활성화 시 수행됩니다.
+// setupProviders는 provider 인스턴스를 생성하고 Registry와 DB에 등록합니다.
+// DB에 이미 enabled=true인 provider가 있으면 Registry에도 동기화합니다.
 // 반환값: 등록된 provider 수
 func setupProviders(cfg *config.Config, registry *provider.Registry, s *store.Store, logger *slog.Logger) int {
-	// Cursor, Gemini는 option 인자를 받으므로 먼저 구성합니다
-	cursorOpts := []cursor.Option{}
-	if cfg.CursorDBPath != "" {
-		cursorOpts = append(cursorOpts, cursor.WithDBPath(cfg.CursorDBPath))
-	}
-
-	geminiOpts := []gemini.Option{}
-	if cfg.GeminiCredPath != "" {
-		geminiOpts = append(geminiOpts, gemini.WithCredPath(cfg.GeminiCredPath))
-	}
-
 	providers := []provider.Provider{
 		claude.New(),
 		codex.New(),
 		copilot.New(),
-		cursor.New(cursorOpts...),
-		gemini.New(geminiOpts...),
 	}
 
 	for _, p := range providers {
@@ -147,6 +132,22 @@ func setupProviders(cfg *config.Config, registry *provider.Registry, s *store.St
 
 		if _, err := s.CreateProviderDisabled(p.Name(), p.Name(), string(configJSON)); err != nil {
 			logger.Error("Failed to register provider in DB", "provider", p.Name(), "error", err)
+		}
+	}
+
+	// DB의 enabled 상태를 Registry에 동기화 (서버 재시작 시 활성화 유지)
+	dbProviders, err := s.ListProviders()
+	if err != nil {
+		logger.Error("Failed to list providers for sync", "error", err)
+	} else {
+		for _, dp := range dbProviders {
+			if dp.Enabled {
+				if err := registry.SetEnabled(dp.Name, true); err != nil {
+					logger.Warn("Failed to sync enabled state", "provider", dp.Name, "error", err)
+				} else {
+					logger.Info("Restored enabled state from DB", "provider", dp.Name)
+				}
+			}
 		}
 	}
 

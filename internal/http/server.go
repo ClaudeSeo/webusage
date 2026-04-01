@@ -445,7 +445,7 @@ func (s *Server) handleEnableProvider(w nethttp.ResponseWriter, r *nethttp.Reque
 
 	p, ok := s.registry.Get(name)
 	if !ok {
-		s.jsonError(w, fmt.Sprintf("Provider %q not found. Available providers: claude, copilot, cursor, gemini", name), nethttp.StatusBadRequest)
+		s.jsonError(w, fmt.Sprintf("Provider %q not found. Available providers: claude, codex, copilot", name), nethttp.StatusBadRequest)
 		return
 	}
 
@@ -593,11 +593,8 @@ var metricLabels = map[string]string{
 	"weekly_sonnet":        "주간 Sonnet",
 	"extra_credits":        "Extra 크레딧",
 	"credits":              "크레딧",
-	"requests_total":       "총 요청",
-	"requests_fast":        "프리미엄 요청",
 	"premium_interactions": "프리미엄 사용량",
 	"chat":                 "채팅",
-	"api_access":           "API 접근",
 }
 
 // metricLabel은 메트릭 키를 한글 표시 레이블로 변환합니다

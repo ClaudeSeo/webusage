@@ -21,8 +21,6 @@ type Config struct {
 
 	// Provider credential 경로 설정 (기본값은 각 앱의 표준 위치)
 	ClaudeCredPath string // ~/.claude/.credentials.json 기본값
-	GeminiCredPath string // ~/.gemini/oauth_creds.json 기본값
-	CursorDBPath   string // ~/.cursor/storage 기본값
 }
 
 // LoadConfig는 .env 파일과 환경변수에서 설정을 로드합니다
@@ -39,9 +37,7 @@ func LoadConfig() (*Config, error) {
 		ServerHost:         getEnv("SERVER_HOST", "127.0.0.1"),
 		ServerPort:         getIntEnv("SERVER_PORT", 8080),
 		CollectionInterval: time.Duration(interval) * time.Second,
-		ClaudeCredPath:     getEnv("CLAUDE_CRED_PATH", "~/.claude/.credentials.json"),
-		GeminiCredPath:     getEnv("GEMINI_CRED_PATH", "~/.gemini/oauth_creds.json"),
-		CursorDBPath:       getEnv("CURSOR_DB_PATH", ""),
+		ClaudeCredPath: getEnv("CLAUDE_CRED_PATH", "~/.claude/.credentials.json"),
 	}, nil
 }
 
