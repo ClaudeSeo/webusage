@@ -266,19 +266,32 @@ function updateRiskBanner(risk) {
 }
 
 function startAutoRefresh() {
+    if (refreshInterval) clearInterval(refreshInterval);
     refreshInterval = setInterval(async function() {
         try {
-            const response = await fetch('/api/current');
-            if (!response.ok) throw new Error('상태 체크 실패');
-            
-            const data = await response.json();
-            const risk = calculateRiskSummary(data.providers);
-            updateRiskBanner(risk);
-            
-            const healthResponse = await fetch('/healthz');
-            const health = await healthResponse.json();
-            
-            if (health.status === 'error') {
+            // /api/current, /healthz 병렬 호출
+            const [currentResult, healthResult] = await Promise.allSettled([
+                fetch('/api/current').then(r => { if (!r.ok) throw new Error('상태 체크 실패'); return r.json(); }),
+                fetch('/healthz').then(r => r.json())
+            ]);
+
+            if (currentResult.status === 'fulfilled') {
+                const data = currentResult.value;
+                // /api/current 응답: {providerName: {provider_id, enabled, metrics, last_run, last_error}}
+                const providers = Object.entries(data).map(([name, info]) => ({
+                    id: info.provider_id,
+                    metrics: Object.entries(info.metrics || {}).map(([metric, used]) => ({
+                        used: used,
+                        limit: 0
+                    })),
+                    collectedAt: info.last_run || null,
+                    lastError: info.last_error || null
+                }));
+                const risk = calculateRiskSummary(providers);
+                updateRiskBanner(risk);
+            }
+
+            if (healthResult.status === 'fulfilled' && healthResult.value.status === 'error') {
                 showHealthWarning('서버 상태 이상 감지');
             }
             

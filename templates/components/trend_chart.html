@@ -42,7 +42,10 @@ async function loadTrendData(range = '{{.Range}}') {
         });
     } catch (error) {
         console.error('추이 데이터 로드 오류:', error);
-        showErrorState('추이 데이터를 불러올 수 없습니다.');
+        const container = document.querySelector('.chart-container');
+        if (container) {
+            container.innerHTML = '<div style="text-align:center;color:var(--accent-red);padding:2rem;">추이 데이터를 불러올 수 없습니다.</div>';
+        }
     }
 }
 
@@ -54,36 +57,34 @@ function isValidRange(range) {
 function renderTrendChart(data, range) {
     const ctx = document.getElementById('trendChart').getContext('2d');
     
-    // Group data by provider
-    const providerData = {};
+    // /api/trends 응답: {providerName: {provider_id, range, trend: [{timestamp, value, metric}]}}
+    const seriesMap = {};
     const labels = new Set();
-    
-    data.points.forEach(point => {
-        if (!providerData[point.providerId]) {
-            providerData[point.providerId] = [];
-        }
-        labels.add(point.collectedAt);
+
+    Object.entries(data).forEach(([providerName, providerObj]) => {
+        (providerObj.trend || []).forEach(point => {
+            labels.add(point.timestamp);
+            const key = providerName + ' ' + point.metric;
+            if (!seriesMap[key]) {
+                seriesMap[key] = { providerName, metric: point.metric, points: [] };
+            }
+            seriesMap[key].points.push(point);
+        });
     });
-    
+
     // Sort labels chronologically
-    const sortedLabels = Array.from(labels).sort((a, b) => 
+    const sortedLabels = Array.from(labels).sort((a, b) =>
         new Date(a) - new Date(b)
     );
-    
-    // Build datasets for each provider
-    const datasets = Object.keys(providerData).map((providerId, index) => {
-        const providerPoints = data.points
-            .filter(p => p.providerId === providerId)
-            .sort((a, b) => new Date(a.collectedAt) - new Date(b.collectedAt));
-        
+
+    // Build datasets for each providerName+metric combination
+    const datasets = Object.entries(seriesMap).map(([key, series], index) => {
+        const pointMap = new Map(series.points.map(p => [p.timestamp, p.value]));
         return {
-            label: providerId,
-            data: sortedLabels.map(label => {
-                const point = providerPoints.find(p => p.collectedAt === label);
-                return point ? ((point.used / point.limit) * 100).toFixed(2) : null;
-            }),
-            borderColor: getProviderColor(providerId, index),
-            backgroundColor: getProviderColor(providerId, index).replace('60%', '20%'),
+            label: key,
+            data: sortedLabels.map(label => pointMap.get(label) ?? null),
+            borderColor: getProviderColor(key, index),
+            backgroundColor: getProviderColor(key, index).replace('60%', '20%'),
             tension: 0.4,
             fill: false,
             pointRadius: 3,
@@ -137,7 +138,9 @@ function renderTrendChart(data, range) {
                     borderWidth: 1,
                     callbacks: {
                         label: function(context) {
-                            return `${context.dataset.label}: ${context.parsed.y.toFixed(1)}%`;
+                            const val = context.parsed.y;
+                            if (val == null) return context.dataset.label + ': N/A';
+                            return `${context.dataset.label}: ${val.toFixed(1)}`;
                         }
                     }
                 }
@@ -155,19 +158,16 @@ function renderTrendChart(data, range) {
                 },
                 y: {
                     beginAtZero: true,
-                    max: 100,
+                    suggestedMin: 0,
                     grid: {
                         color: '#334155'
                     },
                     ticks: {
-                        color: '#94a3b8',
-                        callback: function(value) {
-                            return value + '%';
-                        }
+                        color: '#94a3b8'
                     },
                     title: {
                         display: true,
-                        text: '사용률 (%)',
+                        text: '사용량',
                         color: '#94a3b8'
                     }
                 }

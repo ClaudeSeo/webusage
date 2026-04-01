@@ -586,16 +586,23 @@ func (s *Server) Start(ctx context.Context) error {
 	return nil
 }
 
+// metricLabels는 메트릭 키 → 한글 표시 레이블 매핑 (읽기 전용, 동시 접근 안전)
+var metricLabels = map[string]string{
+	"session":              "세션 (5h)",
+	"weekly":               "주간 (7d)",
+	"weekly_sonnet":        "주간 Sonnet",
+	"extra_credits":        "Extra 크레딧",
+	"credits":              "크레딧",
+	"requests_total":       "총 요청",
+	"requests_fast":        "프리미엄 요청",
+	"premium_interactions": "프리미엄 사용량",
+	"chat":                 "채팅",
+	"api_access":           "API 접근",
+}
+
 // metricLabel은 메트릭 키를 한글 표시 레이블로 변환합니다
 func metricLabel(metric string) string {
-	labels := map[string]string{
-		"session":        "세션 (5h)",
-		"weekly":         "주간 (7d)",
-		"weekly_sonnet":  "주간 Sonnet",
-		"extra_credits":  "Extra 크레딧",
-		"credits":        "크레딧",
-	}
-	if label, ok := labels[metric]; ok {
+	if label, ok := metricLabels[metric]; ok {
 		return label
 	}
 	return metric
