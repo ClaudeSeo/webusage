@@ -9,8 +9,10 @@ import (
 	nethttp "net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
+	"github.com/ClaudeSeo/webusage/internal/provider"
 	"github.com/ClaudeSeo/webusage/internal/stats"
 	"github.com/ClaudeSeo/webusage/internal/store"
 )
@@ -18,6 +20,7 @@ import (
 // Server manages the HTTP server
 type Server struct {
 	store       *store.Store
+	registry    *provider.Registry
 	host        string
 	port        int
 	logger      *slog.Logger
@@ -35,6 +38,7 @@ func NewServer(s *store.Store, host string, port int, logger *slog.Logger, templ
 
 	server := &Server{
 		store:       s,
+		registry:    nil, // SetRegistry로 주입
 		host:        host,
 		port:        port,
 		logger:      logger,
@@ -301,7 +305,12 @@ func (s *Server) handleTrends(w nethttp.ResponseWriter, r *nethttp.Request) {
 	s.jsonResponse(w, result)
 }
 
-// handleProviders returns list of configured providers
+// SetRegistry는 provider Registry를 주입합니다
+func (s *Server) SetRegistry(r *provider.Registry) {
+	s.registry = r
+}
+
+// handleProviders returns list of configured providers, including registry metadata if available
 func (s *Server) handleProviders(w nethttp.ResponseWriter, r *nethttp.Request) {
 	if r.Method != nethttp.MethodGet {
 		nethttp.Error(w, "Method not allowed", nethttp.StatusMethodNotAllowed)
@@ -314,8 +323,136 @@ func (s *Server) handleProviders(w nethttp.ResponseWriter, r *nethttp.Request) {
 		return
 	}
 
+	type providerResponse struct {
+		ID          int64      `json:"id"`
+		Name        string     `json:"name"`
+		DisplayName string     `json:"display_name"`
+		AuthMethod  string     `json:"auth_method"`
+		Enabled     bool       `json:"enabled"`
+		LastRun     *time.Time `json:"last_run,omitempty"`
+		LastError   *string    `json:"last_error,omitempty"`
+	}
+
+	result := make([]providerResponse, 0, len(providers))
+	for _, p := range providers {
+		resp := providerResponse{
+			ID:          p.ID,
+			Name:        p.Name,
+			DisplayName: p.Name,
+			Enabled:     p.Enabled,
+			LastRun:     p.LastRun,
+			LastError:   p.LastError,
+		}
+
+		// registry에서 display_name, auth_method, enabled 상태 보강
+		if s.registry != nil {
+			if rp, ok := s.registry.Get(p.Name); ok {
+				resp.DisplayName = rp.DisplayName()
+				resp.AuthMethod = string(rp.AuthMethod())
+				resp.Enabled = s.registry.IsEnabled(p.Name)
+			}
+		}
+
+		result = append(result, resp)
+	}
+
 	s.jsonResponse(w, map[string]interface{}{
-		"providers": providers,
+		"providers": result,
+	})
+}
+
+// handleProviderAction handles /api/providers/{name}/enable and /api/providers/{name}/disable
+func (s *Server) handleProviderAction(w nethttp.ResponseWriter, r *nethttp.Request) {
+	// URL: /api/providers/{name}/enable 또는 /api/providers/{name}/disable
+	// path prefix "/api/providers/" 이후 파싱
+	path := strings.TrimPrefix(r.URL.Path, "/api/providers/")
+	parts := strings.Split(path, "/")
+	if len(parts) != 2 {
+		s.jsonError(w, "Invalid path: expected /api/providers/{name}/enable or /api/providers/{name}/disable", nethttp.StatusNotFound)
+		return
+	}
+
+	name := parts[0]
+	action := parts[1]
+
+	if action != "enable" && action != "disable" {
+		s.jsonError(w, "Unknown action: use 'enable' or 'disable'", nethttp.StatusNotFound)
+		return
+	}
+
+	if r.Method != nethttp.MethodPost {
+		nethttp.Error(w, "Method not allowed", nethttp.StatusMethodNotAllowed)
+		return
+	}
+
+	switch action {
+	case "enable":
+		s.handleEnableProvider(w, r, name)
+	case "disable":
+		s.handleDisableProvider(w, r, name)
+	}
+}
+
+// handleEnableProvider activates a provider after credential discovery
+func (s *Server) handleEnableProvider(w nethttp.ResponseWriter, r *nethttp.Request, name string) {
+	if s.registry == nil {
+		s.jsonError(w, "Registry not available", nethttp.StatusInternalServerError)
+		return
+	}
+
+	p, ok := s.registry.Get(name)
+	if !ok {
+		s.jsonError(w, fmt.Sprintf("Provider %q not found. Available providers: claude, copilot, cursor, gemini", name), nethttp.StatusBadRequest)
+		return
+	}
+
+	found, err := p.DiscoverCredentials(r.Context())
+	if err != nil {
+		s.jsonError(w, fmt.Sprintf("Credential discovery failed for %q: %v", name, err), nethttp.StatusBadRequest)
+		return
+	}
+	if !found {
+		s.jsonError(w, fmt.Sprintf("No credentials found for %q. Please log in to the provider first.", name), nethttp.StatusBadRequest)
+		return
+	}
+
+	if err := s.store.EnableProviderByName(name, true); err != nil {
+		s.jsonError(w, fmt.Sprintf("Failed to enable provider %q in database: %v", name, err), nethttp.StatusInternalServerError)
+		return
+	}
+
+	if err := s.registry.SetEnabled(name, true); err != nil {
+		s.logger.Warn("Failed to set registry enabled state", "provider", name, "error", err)
+	}
+
+	dbProvider, err := s.store.GetProviderByName(name)
+	if err != nil {
+		s.jsonError(w, "Provider enabled but failed to fetch updated state", nethttp.StatusInternalServerError)
+		return
+	}
+
+	s.jsonResponse(w, map[string]interface{}{
+		"provider":     dbProvider,
+		"display_name": p.DisplayName(),
+		"auth_method":  string(p.AuthMethod()),
+		"enabled":      true,
+	})
+}
+
+// handleDisableProvider deactivates a provider
+func (s *Server) handleDisableProvider(w nethttp.ResponseWriter, r *nethttp.Request, name string) {
+	if err := s.store.EnableProviderByName(name, false); err != nil {
+		s.jsonError(w, fmt.Sprintf("Failed to disable provider %q: %v", name, err), nethttp.StatusInternalServerError)
+		return
+	}
+
+	if s.registry != nil {
+		s.registry.SetEnabled(name, false) //nolint:errcheck — provider 미존재 시 무시
+	}
+
+	s.jsonResponse(w, map[string]interface{}{
+		"name":    name,
+		"enabled": false,
 	})
 }
 

@@ -76,13 +76,13 @@ func TestRegistry_List(t *testing.T) {
 
 func TestRegistry_ListEnabled(t *testing.T) {
 	r := NewRegistry()
-	r.Register(&mockProvider{name: "enabled1"})
-	r.Register(&mockProvider{name: "enabled2"})
-	r.Register(&mockProvider{name: "disabled"})
+	r.Register(&mockProvider{name: "p1"})
+	r.Register(&mockProvider{name: "p2"})
+	r.Register(&mockProvider{name: "p3"})
 
-	if err := r.SetEnabled("disabled", false); err != nil {
-		t.Fatalf("SetEnabled() error: %v", err)
-	}
+	// 기본값 disabled — 2개만 활성화
+	r.SetEnabled("p1", true)
+	r.SetEnabled("p2", true)
 
 	enabled := r.ListEnabled()
 	if len(enabled) != 2 {
@@ -94,25 +94,25 @@ func TestRegistry_SetEnabled(t *testing.T) {
 	r := NewRegistry()
 	r.Register(&mockProvider{name: "test"})
 
-	// 기본 활성화 상태 확인
-	if !r.IsEnabled("test") {
-		t.Error("IsEnabled() should be true after registration")
-	}
-
-	// 비활성화
-	if err := r.SetEnabled("test", false); err != nil {
-		t.Fatalf("SetEnabled() error: %v", err)
-	}
+	// 기본값은 disabled (opt-in 모델)
 	if r.IsEnabled("test") {
-		t.Error("IsEnabled() should be false after SetEnabled(false)")
+		t.Error("IsEnabled() should be false after registration (opt-in model)")
 	}
 
-	// 다시 활성화
+	// 활성화
 	if err := r.SetEnabled("test", true); err != nil {
 		t.Fatalf("SetEnabled() error: %v", err)
 	}
 	if !r.IsEnabled("test") {
 		t.Error("IsEnabled() should be true after SetEnabled(true)")
+	}
+
+	// 다시 비활성화
+	if err := r.SetEnabled("test", false); err != nil {
+		t.Fatalf("SetEnabled() error: %v", err)
+	}
+	if r.IsEnabled("test") {
+		t.Error("IsEnabled() should be false after SetEnabled(false)")
 	}
 }
 

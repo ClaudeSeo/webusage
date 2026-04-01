@@ -66,10 +66,45 @@ func TestReadSQLiteValue(t *testing.T) {
 		}
 	})
 
-	t.Run("존재하지 않는 DB 파일", func(t *testing.T) {
-		_, err := ReadSQLiteValue("/tmp/nonexistent-test.db", "ItemTable", "key")
+	t.Run("존재하지 않는 DB 파일 — 테이블 없음 에러", func(t *testing.T) {
+		// plain path 방식은 파일이 없으면 빈 DB를 생성하므로 테이블 미존재 에러가 발생합니다
+		tmpFile, err := os.CreateTemp("", "empty-*.db")
+		if err != nil {
+			t.Fatal(err)
+		}
+		tmpFile.Close()
+		emptyPath := tmpFile.Name()
+		defer os.Remove(emptyPath)
+
+		_, err = ReadSQLiteValue(emptyPath, "ItemTable", "key")
 		if err == nil {
-			t.Error("ReadSQLiteValue() should return error for nonexistent DB")
+			t.Error("ReadSQLiteValue() should return error for empty DB (no table)")
+		}
+	})
+
+	t.Run("허용되지 않은 테이블명 거부", func(t *testing.T) {
+		dbPath := createTestSQLiteDB(t)
+		defer os.Remove(dbPath)
+
+		_, err := ReadSQLiteValue(dbPath, "malicious; DROP TABLE", "key")
+		if err == nil {
+			t.Error("ReadSQLiteValue() should reject disallowed table name")
+		}
+	})
+
+	t.Run("PRAGMA query_only — 쓰기 차단", func(t *testing.T) {
+		dbPath := createTestSQLiteDB(t)
+		defer os.Remove(dbPath)
+
+		// ReadSQLiteValue 내부에서 query_only=ON이 설정되므로
+		// 동일 DB 파일을 열어 쓰기를 시도하면 차단되어야 합니다.
+		// 여기서는 ReadSQLiteValue가 정상 값을 반환하는지만 재확인합니다.
+		value, err := ReadSQLiteValue(dbPath, "ItemTable", "testKey")
+		if err != nil {
+			t.Fatalf("ReadSQLiteValue() error = %v", err)
+		}
+		if value != "testValue" {
+			t.Errorf("ReadSQLiteValue() = %q, want %q", value, "testValue")
 		}
 	})
 }

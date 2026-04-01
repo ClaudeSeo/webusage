@@ -48,19 +48,10 @@ func main() {
 
 	logger.Info("Database initialized with WAL mode")
 
-	// Setup provider registry
+	// Setup provider registry — 모든 provider 등록 (기본 disabled)
 	registry := provider.NewRegistry()
-	count := setupProviders(cfg, registry, logger)
-	if count == 0 {
-		// 0개 발견되어도 서버는 시작합니다
-		logger.Warn("No providers discovered: dashboard will show no data until credentials are configured")
-	}
-
-	// Initialize providers in database
-	if err := initializeProvidersInDB(s, registry); err != nil {
-		logger.Error("Failed to initialize providers", "error", err)
-		os.Exit(1)
-	}
+	count := setupProviders(cfg, registry, s, logger)
+	logger.Info("Registered providers (all disabled by default)", "count", count)
 
 	// Create context with cancellation
 	ctx, cancel := context.WithCancel(context.Background())
@@ -82,11 +73,10 @@ func main() {
 		logger.Error("Failed to create HTTP server", "error", err)
 		os.Exit(1)
 	}
+	httpServer.SetRegistry(registry)
 
-	// Start collector using registry's enabled providers
-	// collector은 RefreshAuth를 호출하지 않습니다.
-	// 각 provider의 FetchUsage 내부에서 토큰 갱신을 처리합니다.
-	coll := collector.NewCollector(s, registry.ListEnabled(), cfg.CollectionInterval, logger)
+	// collector는 DB의 enabled 상태를 기준으로 수집 — registry는 인증 에러 시 런타임 비활성화에 사용
+	coll := collector.NewCollector(s, registry.ListEnabled(), cfg.CollectionInterval, logger, registry)
 
 	// Run both services
 	errChan := make(chan error, 2)
@@ -115,96 +105,46 @@ func main() {
 	logger.Info("Shutdown complete")
 }
 
-// setupProviders는 모든 provider를 생성하고 DiscoverCredentials로 자격증명을 탐색합니다.
-// 발견된 provider만 Registry에 등록합니다.
-// 반환값: 발견된 provider 수
-func setupProviders(cfg *config.Config, registry *provider.Registry, logger *slog.Logger) int {
-	ctx := context.Background()
-	discovered := 0
-
-	// Claude Provider: ~/.claude/.credentials.json 또는 macOS Keychain 자동 탐색
-	claudeProvider := claude.New()
-	if found, err := claudeProvider.DiscoverCredentials(ctx); err != nil {
-		logger.Warn("Claude credential discovery failed", "error", err)
-	} else if found {
-		registry.Register(claudeProvider)
-		logger.Info("Claude provider configured")
-		discovered++
-	} else {
-		logger.Info("Claude credentials not found (run 'claude login' to enable)")
-	}
-
-	// Copilot Provider: macOS Keychain (gh CLI) 자동 탐색
-	copilotProvider := copilot.New()
-	if found, err := copilotProvider.DiscoverCredentials(ctx); err != nil {
-		logger.Warn("Copilot credential discovery failed", "error", err)
-	} else if found {
-		registry.Register(copilotProvider)
-		logger.Info("GitHub Copilot provider configured")
-		discovered++
-	} else {
-		logger.Info("GitHub Copilot credentials not found (install gh CLI and run 'gh auth login')")
-	}
-
-	// Cursor Provider: SQLite DB 또는 Keychain 자동 탐색
+// setupProviders는 4개 provider 인스턴스를 생성하고 Registry와 DB에 모두 등록합니다.
+// DiscoverCredentials를 호출하지 않습니다 — 자격증명 탐색은 provider 활성화 시 수행됩니다.
+// 반환값: 등록된 provider 수
+func setupProviders(cfg *config.Config, registry *provider.Registry, s *store.Store, logger *slog.Logger) int {
+	// Cursor, Gemini는 option 인자를 받으므로 먼저 구성합니다
 	cursorOpts := []cursor.Option{}
 	if cfg.CursorDBPath != "" {
 		cursorOpts = append(cursorOpts, cursor.WithDBPath(cfg.CursorDBPath))
 	}
-	cursorProvider := cursor.New(cursorOpts...)
-	if found, err := cursorProvider.DiscoverCredentials(ctx); err != nil {
-		logger.Warn("Cursor credential discovery failed", "error", err)
-	} else if found {
-		registry.Register(cursorProvider)
-		logger.Info("Cursor provider configured")
-		discovered++
-	} else {
-		logger.Info("Cursor credentials not found (install Cursor and log in)")
-	}
 
-	// Gemini Provider: ~/.gemini/oauth_creds.json 자동 탐색
 	geminiOpts := []gemini.Option{}
 	if cfg.GeminiCredPath != "" {
 		geminiOpts = append(geminiOpts, gemini.WithCredPath(cfg.GeminiCredPath))
 	}
-	geminiProvider := gemini.New(geminiOpts...)
-	if found, err := geminiProvider.DiscoverCredentials(ctx); err != nil {
-		logger.Warn("Gemini credential discovery failed", "error", err)
-	} else if found {
-		registry.Register(geminiProvider)
-		logger.Info("Google Gemini provider configured")
-		discovered++
-	} else {
-		logger.Info("Gemini credentials not found (install gemini CLI and log in)")
+
+	providers := []provider.Provider{
+		claude.New(),
+		copilot.New(),
+		cursor.New(cursorOpts...),
+		gemini.New(geminiOpts...),
 	}
 
-	logger.Info("Provider discovery complete", "discovered", discovered)
-	return discovered
-}
+	for _, p := range providers {
+		// Registry에 등록 (enabled=false 기본값)
+		registry.Register(p)
 
-// initializeProvidersInDB는 Registry의 provider를 DB에 등록합니다
-func initializeProvidersInDB(s *store.Store, registry *provider.Registry) error {
-	for _, p := range registry.List() {
-		// 이미 존재하는 provider는 건너뜁니다
-		existing, err := s.GetProviderByName(p.Name())
-		if err == nil && existing != nil {
-			continue
-		}
-
-		// Provider 설정을 JSON으로 직렬화합니다
+		// DB에 비활성화 상태로 등록 (INSERT OR IGNORE — 이미 존재하면 무시)
 		configData := map[string]string{
 			"auth_method": string(p.AuthMethod()),
 		}
 		configJSON, err := json.Marshal(configData)
 		if err != nil {
-			return fmt.Errorf("marshaling config for %s: %w", p.Name(), err)
+			logger.Error("Failed to marshal provider config", "provider", p.Name(), "error", err)
+			continue
 		}
 
-		// DB에 provider를 생성합니다
-		if _, err := s.CreateProvider(p.Name(), string(configJSON)); err != nil {
-			return fmt.Errorf("creating provider %s: %w", p.Name(), err)
+		if _, err := s.CreateProviderDisabled(p.Name(), p.Name(), string(configJSON)); err != nil {
+			logger.Error("Failed to register provider in DB", "provider", p.Name(), "error", err)
 		}
 	}
 
-	return nil
+	return len(providers)
 }

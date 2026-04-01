@@ -1,5 +1,5 @@
 {{define "content"}}
-{{/* 
+{{/*
     Dashboard Template
     Expected data structure:
     .Providers: []Provider
@@ -11,6 +11,17 @@
     .ErrorMessage: string
     .RiskSummary: {CriticalCount, WarningCount, StaleCount, OkCount}
 */}}
+
+{{/* Provider 관리 섹션 — /api/providers에서 동적 로드 */}}
+<div id="providerManagement" style="margin-bottom: 2rem; padding: 1.25rem; border-radius: 12px; background: var(--bg-secondary); border: 1px solid var(--border-color);">
+    <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 1rem;">
+        <h2 style="font-size: 1rem; font-weight: 600; margin: 0; color: var(--text-primary);">Provider 관리</h2>
+        <span style="font-size: 0.75rem; color: var(--text-secondary);">활성화된 Provider만 사용량을 수집합니다</span>
+    </div>
+    <div id="providerManagementCards" style="display: flex; flex-wrap: wrap; gap: 0.75rem;">
+        <div style="color: var(--text-secondary); font-size: 0.875rem;">로딩 중...</div>
+    </div>
+</div>
 
 {{/* Risk Summary Banner - 5 second risk assessment */}}
 {{if and (not .HasError) .Providers}}
@@ -109,6 +120,73 @@
 {{end}}
 
 <script>
+// Provider 관리 UI
+async function loadProviderManagement() {
+    try {
+        const resp = await fetch('/api/providers');
+        if (!resp.ok) throw new Error('providers API 실패');
+        const data = await resp.json();
+        renderProviderManagement(data.providers || []);
+    } catch (e) {
+        document.getElementById('providerManagementCards').innerHTML =
+            '<div style="color: var(--accent-red); font-size: 0.875rem;">Provider 목록을 불러올 수 없습니다: ' + e.message + '</div>';
+    }
+}
+
+function renderProviderManagement(providers) {
+    const container = document.getElementById('providerManagementCards');
+    if (!providers.length) {
+        container.innerHTML = '<div style="color: var(--text-secondary); font-size: 0.875rem;">등록된 Provider가 없습니다.</div>';
+        return;
+    }
+    container.innerHTML = providers.map(p => providerManagementCard(p)).join('');
+}
+
+function providerManagementCard(p) {
+    const isEnabled = p.enabled;
+    const opacity = isEnabled ? '1' : '0.55';
+    const badgeStyle = isEnabled
+        ? 'background: rgba(34,197,94,0.15); color: var(--accent-green); border: 1px solid var(--accent-green);'
+        : 'background: rgba(107,114,128,0.15); color: #9ca3af; border: 1px solid #374151;';
+    const badgeText = isEnabled ? '활성' : '비활성';
+    const btnStyle = isEnabled
+        ? 'background: rgba(239,68,68,0.15); color: var(--accent-red); border: 1px solid var(--accent-red);'
+        : 'background: rgba(34,197,94,0.15); color: var(--accent-green); border: 1px solid var(--accent-green);';
+    const btnText = isEnabled ? '비활성화' : '활성화';
+    const btnAction = isEnabled ? 'disable' : 'enable';
+
+    return `<div id="pm-card-${p.name}" style="opacity:${opacity}; padding: 1rem; border-radius: 10px; background: var(--bg-primary); border: 1px solid var(--border-color); min-width: 160px; display: flex; flex-direction: column; gap: 0.5rem;">
+        <div style="display: flex; align-items: center; justify-content: space-between; gap: 0.5rem;">
+            <span style="font-size: 0.9rem; font-weight: 600; color: var(--text-primary);">${p.display_name || p.name}</span>
+            <span style="font-size: 0.7rem; padding: 2px 8px; border-radius: 999px; ${badgeStyle}">${badgeText}</span>
+        </div>
+        <div style="font-size: 0.7rem; color: var(--text-secondary);">${p.auth_method || ''}</div>
+        <button onclick="toggleProvider('${p.name}', '${btnAction}')"
+            style="margin-top: 0.25rem; padding: 0.35rem 0.75rem; border-radius: 6px; font-size: 0.8rem; font-weight: 600; cursor: pointer; transition: opacity 0.2s; ${btnStyle}"
+            id="pm-btn-${p.name}">
+            ${btnText}
+        </button>
+    </div>`;
+}
+
+async function toggleProvider(name, action) {
+    const btn = document.getElementById(`pm-btn-${name}`);
+    if (btn) { btn.disabled = true; btn.textContent = '처리 중...'; }
+    try {
+        const resp = await fetch(`/api/providers/${name}/${action}`, { method: 'POST' });
+        const data = await resp.json();
+        if (!resp.ok) {
+            alert(`${action === 'enable' ? '활성화' : '비활성화'} 실패: ${data.error}`);
+            return;
+        }
+        // 카드 상태 즉시 갱신
+        await loadProviderManagement();
+    } catch (e) {
+        alert('요청 실패: ' + e.message);
+        if (btn) { btn.disabled = false; }
+    }
+}
+
 // Auto-refresh every 30 seconds
 let refreshInterval = null;
 
@@ -240,6 +318,11 @@ document.addEventListener('visibilitychange', function() {
 
 // Start auto-refresh on page load
 startAutoRefresh();
+
+// Provider 관리 UI 초기 로드
+document.addEventListener('DOMContentLoaded', function() {
+    loadProviderManagement();
+});
 
 // Initial risk calculation from server data
 document.addEventListener('DOMContentLoaded', function() {

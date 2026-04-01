@@ -1,8 +1,11 @@
 {{define "providerCard"}}
-<div class="card" data-provider-id="{{.ID}}">
+{{$disabled := and (not .Enabled) (not (eq .Enabled true))}}
+<div class="card" data-provider-id="{{.ID}}" {{if not .Enabled}}style="opacity: 0.5;"{{end}}>
     <div class="card-header">
         <h3 class="card-title">{{.Name}}</h3>
-        {{if .LastError}}
+        {{if not .Enabled}}
+            <span class="card-status" style="background: rgba(107,114,128,0.15); color: #9ca3af; border: 1px solid #374151;">비활성</span>
+        {{else if .LastError}}
             <span class="card-status status-error">에러</span>
         {{else if isStale .CollectedAt}}
             <span class="card-status status-warning">오래됨</span>

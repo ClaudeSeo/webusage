@@ -23,14 +23,15 @@ func NewRegistry() *Registry {
 
 // Register는 provider를 레지스트리에 등록합니다
 // 같은 이름으로 재등록하면 기존 provider를 덮어씁니다
+// 기본값은 disabled — 명시적으로 SetEnabled(name, true)를 호출해야 수집이 시작됩니다
 func (r *Registry) Register(p Provider) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
 	name := p.Name()
 	r.providers[name] = p
-	// 등록 시 기본으로 활성화
-	r.enabled[name] = true
+	// 등록 시 기본으로 비활성화 (opt-in 모델)
+	r.enabled[name] = false
 }
 
 // Get은 이름으로 provider를 조회합니다
@@ -63,6 +64,11 @@ func (r *Registry) List() []Provider {
 		result = append(result, p)
 	}
 	return result
+}
+
+// GetAll은 활성화 여부와 무관하게 모든 provider를 반환합니다
+func (r *Registry) GetAll() []Provider {
+	return r.List()
 }
 
 // ListEnabled는 활성화된 provider만 반환합니다

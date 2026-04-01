@@ -36,6 +36,34 @@ func (s *Store) CreateProvider(name, configJSON string) (int64, error) {
 	return id, nil
 }
 
+// CreateProviderDisabled는 provider를 비활성화 상태로 등록합니다 (INSERT OR IGNORE)
+// 이미 존재하는 provider는 무시합니다
+func (s *Store) CreateProviderDisabled(name, displayName, configJSON string) (int64, error) {
+	result, err := s.db.Exec(`
+		INSERT OR IGNORE INTO providers (name, enabled, config_json)
+		VALUES (?, FALSE, ?)
+	`, name, configJSON)
+	if err != nil {
+		return 0, err
+	}
+
+	id, err := result.LastInsertId()
+	if err != nil {
+		return 0, err
+	}
+
+	// INSERT OR IGNORE가 무시된 경우 기존 ID를 반환
+	if id == 0 {
+		existing, err := s.GetProviderByName(name)
+		if err != nil {
+			return 0, err
+		}
+		return existing.ID, nil
+	}
+
+	return id, nil
+}
+
 // GetProvider retrieves a provider by ID
 func (s *Store) GetProvider(id int64) (*Provider, error) {
 	p := &Provider{}
@@ -142,12 +170,21 @@ func (s *Store) UpdateProviderStatus(id int64, lastError *string) error {
 	return err
 }
 
-// EnableProvider enables or disables a provider
+// EnableProvider enables or disables a provider by ID
 func (s *Store) EnableProvider(id int64, enabled bool) error {
 	_, err := s.db.Exec(`
 		UPDATE providers SET enabled = ?, updated_at = CURRENT_TIMESTAMP
 		WHERE id = ?
 	`, enabled, id)
+	return err
+}
+
+// EnableProviderByName enables or disables a provider by name
+func (s *Store) EnableProviderByName(name string, enabled bool) error {
+	_, err := s.db.Exec(`
+		UPDATE providers SET enabled = ?, updated_at = CURRENT_TIMESTAMP
+		WHERE name = ?
+	`, enabled, name)
 	return err
 }
 

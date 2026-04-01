@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"math/big"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -17,6 +18,7 @@ import (
 // Collector manages scheduled usage data collection
 type Collector struct {
 	store          *store.Store
+	registry       *provider.Registry
 	providers      map[string]provider.Provider
 	interval       time.Duration
 	logger         *slog.Logger
@@ -40,6 +42,7 @@ func NewCollector(
 	providers []provider.Provider,
 	interval time.Duration,
 	logger *slog.Logger,
+	registry *provider.Registry,
 ) *Collector {
 	provMap := make(map[string]provider.Provider)
 	for _, p := range providers {
@@ -48,6 +51,7 @@ func NewCollector(
 
 	return &Collector{
 		store:          s,
+		registry:       registry,
 		providers:      provMap,
 		interval:       interval,
 		logger:         logger,
@@ -162,6 +166,15 @@ func (c *Collector) collectProvider(ctx context.Context, p *store.Provider) {
 			return
 		}
 
+		// Auth 에러(401/403)는 재시도 없이 즉시 비활성화
+		if isAuthError(lastErr) {
+			c.logger.Warn("Auth error detected - disabling provider",
+				"provider", p.Name,
+				"error", lastErr)
+			c.disableProvider(p)
+			return
+		}
+
 		c.logger.Warn("Collection attempt failed",
 			"provider", p.Name,
 			"attempt", attempt+1,
@@ -172,6 +185,34 @@ func (c *Collector) collectProvider(ctx context.Context, p *store.Provider) {
 	errMsg := lastErr.Error()
 	if err := c.store.UpdateProviderStatus(p.ID, &errMsg); err != nil {
 		c.logger.Error("Failed to update provider status with error", "error", err)
+	}
+}
+
+// isAuthError는 에러가 401/403 인증 실패인지 판별합니다
+func isAuthError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "401") || strings.Contains(msg, "403")
+}
+
+// disableProvider는 DB와 Registry 양쪽에서 provider를 비활성화하고 last_error를 기록합니다
+func (c *Collector) disableProvider(p *store.Provider) {
+	errMsg := "disabled due to authentication error (401/403)"
+
+	if err := c.store.UpdateProviderStatus(p.ID, &errMsg); err != nil {
+		c.logger.Error("Failed to update provider status", "provider", p.Name, "error", err)
+	}
+
+	if err := c.store.EnableProvider(p.ID, false); err != nil {
+		c.logger.Error("Failed to disable provider in DB", "provider", p.Name, "error", err)
+	}
+
+	if c.registry != nil {
+		if err := c.registry.SetEnabled(p.Name, false); err != nil {
+			c.logger.Error("Failed to disable provider in registry", "provider", p.Name, "error", err)
+		}
 	}
 }
 
