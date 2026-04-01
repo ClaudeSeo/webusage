@@ -12,274 +12,6 @@
     .RiskSummary: {CriticalCount, WarningCount, StaleCount, OkCount}
 */}}
 
-{{/* Provider 관리 섹션 — /api/providers에서 동적 로드 */}}
-<style>
-.provider-management {
-    margin-bottom: 2rem;
-    padding: 1.5rem;
-    border-radius: var(--radius-lg);
-    background: var(--bg-secondary);
-    border: 1px solid var(--border-color);
-    animation: fadeInUp 0.4s ease;
-}
-
-.provider-management-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    margin-bottom: 1rem;
-    flex-wrap: wrap;
-    gap: 0.75rem;
-}
-
-.provider-management-title {
-    font-size: 1rem;
-    font-weight: 600;
-    margin: 0;
-    color: var(--text-primary);
-}
-
-.provider-management-actions {
-    display: flex;
-    align-items: center;
-    gap: 0.75rem;
-}
-
-.provider-management-hint {
-    font-size: 0.75rem;
-    color: var(--text-muted);
-}
-
-.provider-cards {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.75rem;
-}
-
-.provider-card {
-    opacity: 1;
-    padding: 1rem;
-    border-radius: var(--radius-md);
-    background: var(--bg-primary);
-    border: 1px solid var(--border-color);
-    min-width: 160px;
-    display: flex;
-    flex-direction: column;
-    gap: 0.5rem;
-    transition: all var(--transition-fast);
-}
-
-.provider-card:hover {
-    border-color: var(--border-light);
-}
-
-.provider-card.disabled {
-    opacity: 0.55;
-}
-
-.provider-card-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 0.5rem;
-}
-
-.provider-card-name {
-    font-size: 0.9rem;
-    font-weight: 600;
-    color: var(--text-primary);
-}
-
-.provider-card-badge {
-    font-size: 0.7rem;
-    padding: 2px 8px;
-    border-radius: 9999px;
-}
-
-.provider-card-badge.enabled {
-    background: rgba(34, 197, 94, 0.15);
-    color: var(--accent-green);
-    border: 1px solid var(--accent-green);
-}
-
-.provider-card-badge.disabled {
-    background: rgba(107, 114, 128, 0.15);
-    color: #9ca3af;
-    border: 1px solid #374151;
-}
-
-.provider-card-method {
-    font-size: 0.7rem;
-    color: var(--text-muted);
-}
-
-.provider-card-btn {
-    margin-top: 0.25rem;
-    padding: 0.35rem 0.75rem;
-    border-radius: 6px;
-    font-size: 0.8rem;
-    font-weight: 600;
-    cursor: pointer;
-    transition: all var(--transition-fast);
-    border: none;
-}
-
-.provider-card-btn.enable {
-    background: rgba(34, 197, 94, 0.15);
-    color: var(--accent-green);
-    border: 1px solid var(--accent-green);
-}
-
-.provider-card-btn.enable:hover {
-    background: rgba(34, 197, 94, 0.25);
-}
-
-.provider-card-btn.disable {
-    background: rgba(239, 68, 68, 0.15);
-    color: var(--accent-red);
-    border: 1px solid var(--accent-red);
-}
-
-.provider-card-btn.disable:hover {
-    background: rgba(239, 68, 68, 0.25);
-}
-
-.provider-card-btn:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-}
-</style>
-<div id="providerManagement" class="provider-management">
-    <div class="provider-management-header">
-        <h2 class="provider-management-title">Provider 관리</h2>
-        <div class="provider-management-actions">
-            <button onclick="refreshAll()" id="refreshBtn" class="btn" style="font-size: 0.75rem; padding: 0.35rem 0.75rem;">🔄 새로고침</button>
-            <span class="provider-management-hint">활성화된 Provider만 사용량을 수집합니다</span>
-        </div>
-    </div>
-    <div id="providerManagementCards" class="provider-cards">
-        <div style="color: var(--text-secondary); font-size: 0.875rem;">로딩 중...</div>
-    </div>
-</div>
-
-{{/* Risk Summary Banner - 5 second risk assessment */}}
-<style>
-.risk-banner {
-    margin-bottom: 1.5rem;
-    padding: 1.25rem;
-    border-radius: var(--radius-lg);
-    background: var(--bg-secondary);
-    border: 1px solid var(--border-color);
-    animation: fadeInUp 0.4s ease 0.1s backwards;
-}
-
-.risk-banner-content {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    flex-wrap: wrap;
-    gap: 1rem;
-}
-
-.risk-metrics {
-    display: flex;
-    align-items: center;
-    gap: 1.5rem;
-    flex-wrap: wrap;
-}
-
-.risk-metric {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-}
-
-.risk-metric-icon {
-    font-size: 1.5rem;
-}
-
-.risk-metric-label {
-    font-size: 0.75rem;
-    color: var(--text-muted);
-    margin: 0;
-}
-
-.risk-metric-value {
-    font-size: 1.25rem;
-    font-weight: 700;
-    margin: 0;
-}
-
-.risk-metric-value.critical { color: var(--accent-red); }
-.risk-metric-value.warning { color: var(--accent-yellow); }
-.risk-metric-value.ok { color: var(--accent-green); }
-
-.risk-assessment {
-    font-size: 1rem;
-    font-weight: 600;
-    padding: 0.5rem 1rem;
-    border-radius: 8px;
-    transition: all var(--transition-normal);
-}
-
-.risk-assessment.critical {
-    color: var(--accent-red);
-    background: rgba(239, 68, 68, 0.15);
-    border: 1px solid rgba(239, 68, 68, 0.3);
-}
-
-.risk-assessment.warning {
-    color: var(--accent-yellow);
-    background: rgba(234, 179, 8, 0.15);
-    border: 1px solid rgba(234, 179, 8, 0.3);
-}
-
-.risk-assessment.ok {
-    color: var(--accent-green);
-    background: rgba(34, 197, 94, 0.15);
-    border: 1px solid rgba(34, 197, 94, 0.3);
-}
-</style>
-{{if and (not .HasError) .Providers}}
-<div id="riskBanner" class="risk-banner">
-    <div class="risk-banner-content">
-        <div class="risk-metrics">
-            <div class="risk-metric">
-                <span class="risk-metric-icon">🚨</span>
-                <div>
-                    <p class="risk-metric-label">위험 상태</p>
-                    <p id="criticalCount" class="risk-metric-value critical">-</p>
-                </div>
-            </div>
-            <div class="risk-metric">
-                <span class="risk-metric-icon">⚠️</span>
-                <div>
-                    <p class="risk-metric-label">주의</p>
-                    <p id="warningCount" class="risk-metric-value warning">-</p>
-                </div>
-            </div>
-            <div class="risk-metric">
-                <span class="risk-metric-icon">🕐</span>
-                <div>
-                    <p class="risk-metric-label">오래됨</p>
-                    <p id="staleCount" class="risk-metric-value warning">-</p>
-                </div>
-            </div>
-            <div class="risk-metric">
-                <span class="risk-metric-icon">✅</span>
-                <div>
-                    <p class="risk-metric-label">정상</p>
-                    <p id="okCount" class="risk-metric-value ok">-</p>
-                </div>
-            </div>
-        </div>
-        <div id="riskAssessment" class="risk-assessment">
-            <!-- Dynamic assessment -->
-        </div>
-    </div>
-</div>
-{{end}}
-
 {{if .HasError}}
     {{template "errorState" dict 
         "Type" "api-error"
@@ -296,29 +28,31 @@
         "ShowRetry" true
     }}
 {{else}}
-    {{/* Provider Cards Grid */}}
+    {{/* Provider Cards Grid - only enabled providers */}}
     <div class="dashboard-grid">
         {{range .Providers}}
-            {{if .LastError}}
-                {{template "providerCard" dict
-                    "ID" .ID
-                    "Name" .Name
-                    "Enabled" .Enabled
-                    "Metrics" .Metrics
-                    "CollectedAt" .CollectedAt
-                    "UpdatedAt" .UpdatedAt
-                    "LastError" .LastError
-                }}
-            {{else}}
-                {{template "providerCard" dict
-                    "ID" .ID
-                    "Name" .Name
-                    "Enabled" .Enabled
-                    "Metrics" .Metrics
-                    "CollectedAt" .CollectedAt
-                    "UpdatedAt" .UpdatedAt
-                    "LastError" ""
-                }}
+            {{if .Enabled}}
+                {{if .LastError}}
+                    {{template "providerCard" dict
+                        "ID" .ID
+                        "Name" .Name
+                        "Enabled" .Enabled
+                        "Metrics" .Metrics
+                        "CollectedAt" .CollectedAt
+                        "UpdatedAt" .UpdatedAt
+                        "LastError" .LastError
+                    }}
+                {{else}}
+                    {{template "providerCard" dict
+                        "ID" .ID
+                        "Name" .Name
+                        "Enabled" .Enabled
+                        "Metrics" .Metrics
+                        "CollectedAt" .CollectedAt
+                        "UpdatedAt" .UpdatedAt
+                        "LastError" ""
+                    }}
+                {{end}}
             {{end}}
         {{end}}
     </div>

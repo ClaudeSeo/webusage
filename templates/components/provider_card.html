@@ -88,12 +88,10 @@
     background: linear-gradient(90deg, var(--accent-red), var(--accent-red-hover));
 }
 </style>
-<div class="card provider-card-inner" data-provider-id="{{.ID}}" {{if not .Enabled}}style="opacity: 0.5;"{{end}}>
+<div class="card provider-card-inner" data-provider-id="{{.ID}}" data-metrics='{{range $i, $m := .Metrics}}{{if $i}},{{end}}{"label":"{{$m.Label}}","used":{{$m.Used}},"limit":{{$m.Limit}}}{{end}}'>
     <div class="card-header">
         <h3 class="card-title">{{.Name}}</h3>
-        {{if not .Enabled}}
-            <span class="card-status status-disabled">⚫ 비활성</span>
-        {{else if .LastError}}
+        {{if .LastError}}
             <span class="card-status status-error">🔴 에러</span>
         {{else if isStale .CollectedAt}}
             <span class="card-status status-warning">⚠️ 오래됨</span>
@@ -102,32 +100,34 @@
         {{end}}
     </div>
 
-    {{if .Metrics}}
-        {{range .Metrics}}
-        <div class="metric-section">
-            <div class="metric-row">
-                <span class="metric-label">{{.Label}}</span>
-                <span class="metric-value">{{printf "%.1f" .Used}} / {{formatNumber .Limit}}</span>
-            </div>
+    <div class="metrics-container">
+        {{if .Metrics}}
+            {{range .Metrics}}
+            <div class="metric-section" data-used="{{.Used}}" data-limit="{{.Limit}}" data-label="{{.Label}}">
+                <div class="metric-row">
+                    <span class="metric-label">{{.Label}}</span>
+                    <span class="metric-value metric-display">-</span>
+                </div>
 
-            <div class="progress-bar-wrapper">
-                <div class="progress-bar-inner {{if lt .Percent 50.0}}low{{else if lt .Percent 80.0}}medium{{else}}high{{end}}"
-                     style="width: {{printf "%.1f" .Percent}}%"></div>
-            </div>
+                <div class="progress-bar-wrapper">
+                    <div class="progress-bar-inner metric-progress"
+                         style="width: 0%"></div>
+                </div>
 
-            <div class="metric-info">
-                <span>{{printf "%.1f" .Percent}}%</span>
-                {{if not .ResetAt.IsZero}}
-                <span class="metric-reset">리셋: {{formatDateTime .ResetAt}}</span>
-                {{end}}
+                <div class="metric-info">
+                    <span class="metric-percent">-</span>
+                    {{if not .ResetAt.IsZero}}
+                    <span class="metric-reset">리셋: {{formatDateTime .ResetAt}}</span>
+                    {{end}}
+                </div>
             </div>
-        </div>
+            {{end}}
+        {{else}}
+            <div style="padding: 1.5rem 0; color: var(--text-muted); font-size: 0.875rem; text-align: center;">
+                수집된 데이터 없음
+            </div>
         {{end}}
-    {{else}}
-        <div style="padding: 1.5rem 0; color: var(--text-muted); font-size: 0.875rem; text-align: center;">
-            수집된 데이터 없음
-        </div>
-    {{end}}
+    </div>
 
     <div class="metric-row" style="margin-top: 0.5rem;">
         <span class="metric-label">마지막 수집</span>
@@ -153,4 +153,62 @@
         업데이트: {{formatDateTime .UpdatedAt}}
     </div>
 </div>
+
+<script>
+(function() {
+    // Initialize metric display based on gauge mode
+    function updateMetricDisplay() {
+        const mode = localStorage.getItem('gaugeMode') || 'left';
+        const card = document.querySelector('[data-provider-id="{{.ID}}"]');
+        if (!card) return;
+        
+        const metrics = card.querySelectorAll('.metric-section');
+        metrics.forEach(metric => {
+            const used = parseFloat(metric.dataset.used);
+            const limit = parseFloat(metric.dataset.limit);
+            const percent = limit > 0 ? (used / limit) * 100 : 0;
+            
+            // Update display value
+            const display = metric.querySelector('.metric-display');
+            const percentEl = metric.querySelector('.metric-percent');
+            const progress = metric.querySelector('.metric-progress');
+            
+            if (mode === 'left') {
+                // Show remaining (left)
+                const remaining = Math.max(0, limit - used);
+                const remainingPercent = limit > 0 ? (remaining / limit) * 100 : 0;
+                display.textContent = remaining.toFixed(1) + ' / ' + new Intl.NumberFormat('ko-KR').format(limit);
+                percentEl.textContent = remainingPercent.toFixed(1) + '% 남음';
+                progress.style.width = remainingPercent + '%';
+            } else {
+                // Show usage
+                display.textContent = used.toFixed(1) + ' / ' + new Intl.NumberFormat('ko-KR').format(limit);
+                percentEl.textContent = percent.toFixed(1) + '% 사용';
+                progress.style.width = percent + '%';
+            }
+            
+            // Update progress bar color class
+            const effectivePercent = mode === 'left' ? (limit > 0 ? (limit - used) / limit * 100 : 0) : percent;
+            progress.classList.remove('low', 'medium', 'high');
+            if (effectivePercent < 20) {
+                progress.classList.add('high');
+            } else if (effectivePercent < 50) {
+                progress.classList.add('medium');
+            } else {
+                progress.classList.add('low');
+            }
+        });
+    }
+    
+    // Initial update
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', updateMetricDisplay);
+    } else {
+        updateMetricDisplay();
+    }
+    
+    // Listen for gauge mode changes
+    window.addEventListener('gaugeModeChanged', updateMetricDisplay);
+})();
+</script>
 {{end}}
