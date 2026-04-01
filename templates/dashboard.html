@@ -13,54 +13,267 @@
 */}}
 
 {{/* Provider 관리 섹션 — /api/providers에서 동적 로드 */}}
-<div id="providerManagement" style="margin-bottom: 2rem; padding: 1.25rem; border-radius: 12px; background: var(--bg-secondary); border: 1px solid var(--border-color);">
-    <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 1rem;">
-        <h2 style="font-size: 1rem; font-weight: 600; margin: 0; color: var(--text-primary);">Provider 관리</h2>
-        <div style="display: flex; align-items: center; gap: 0.75rem;">
+<style>
+.provider-management {
+    margin-bottom: 2rem;
+    padding: 1.5rem;
+    border-radius: var(--radius-lg);
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    animation: fadeInUp 0.4s ease;
+}
+
+.provider-management-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 1rem;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+}
+
+.provider-management-title {
+    font-size: 1rem;
+    font-weight: 600;
+    margin: 0;
+    color: var(--text-primary);
+}
+
+.provider-management-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+}
+
+.provider-management-hint {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+}
+
+.provider-cards {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+}
+
+.provider-card {
+    opacity: 1;
+    padding: 1rem;
+    border-radius: var(--radius-md);
+    background: var(--bg-primary);
+    border: 1px solid var(--border-color);
+    min-width: 160px;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    transition: all var(--transition-fast);
+}
+
+.provider-card:hover {
+    border-color: var(--border-light);
+}
+
+.provider-card.disabled {
+    opacity: 0.55;
+}
+
+.provider-card-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+}
+
+.provider-card-name {
+    font-size: 0.9rem;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.provider-card-badge {
+    font-size: 0.7rem;
+    padding: 2px 8px;
+    border-radius: 9999px;
+}
+
+.provider-card-badge.enabled {
+    background: rgba(34, 197, 94, 0.15);
+    color: var(--accent-green);
+    border: 1px solid var(--accent-green);
+}
+
+.provider-card-badge.disabled {
+    background: rgba(107, 114, 128, 0.15);
+    color: #9ca3af;
+    border: 1px solid #374151;
+}
+
+.provider-card-method {
+    font-size: 0.7rem;
+    color: var(--text-muted);
+}
+
+.provider-card-btn {
+    margin-top: 0.25rem;
+    padding: 0.35rem 0.75rem;
+    border-radius: 6px;
+    font-size: 0.8rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all var(--transition-fast);
+    border: none;
+}
+
+.provider-card-btn.enable {
+    background: rgba(34, 197, 94, 0.15);
+    color: var(--accent-green);
+    border: 1px solid var(--accent-green);
+}
+
+.provider-card-btn.enable:hover {
+    background: rgba(34, 197, 94, 0.25);
+}
+
+.provider-card-btn.disable {
+    background: rgba(239, 68, 68, 0.15);
+    color: var(--accent-red);
+    border: 1px solid var(--accent-red);
+}
+
+.provider-card-btn.disable:hover {
+    background: rgba(239, 68, 68, 0.25);
+}
+
+.provider-card-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+</style>
+<div id="providerManagement" class="provider-management">
+    <div class="provider-management-header">
+        <h2 class="provider-management-title">Provider 관리</h2>
+        <div class="provider-management-actions">
             <button onclick="refreshAll()" id="refreshBtn" class="btn" style="font-size: 0.75rem; padding: 0.35rem 0.75rem;">🔄 새로고침</button>
-            <span style="font-size: 0.75rem; color: var(--text-secondary);">활성화된 Provider만 사용량을 수집합니다</span>
+            <span class="provider-management-hint">활성화된 Provider만 사용량을 수집합니다</span>
         </div>
     </div>
-    <div id="providerManagementCards" style="display: flex; flex-wrap: wrap; gap: 0.75rem;">
+    <div id="providerManagementCards" class="provider-cards">
         <div style="color: var(--text-secondary); font-size: 0.875rem;">로딩 중...</div>
     </div>
 </div>
 
 {{/* Risk Summary Banner - 5 second risk assessment */}}
+<style>
+.risk-banner {
+    margin-bottom: 1.5rem;
+    padding: 1.25rem;
+    border-radius: var(--radius-lg);
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    animation: fadeInUp 0.4s ease 0.1s backwards;
+}
+
+.risk-banner-content {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 1rem;
+}
+
+.risk-metrics {
+    display: flex;
+    align-items: center;
+    gap: 1.5rem;
+    flex-wrap: wrap;
+}
+
+.risk-metric {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.risk-metric-icon {
+    font-size: 1.5rem;
+}
+
+.risk-metric-label {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    margin: 0;
+}
+
+.risk-metric-value {
+    font-size: 1.25rem;
+    font-weight: 700;
+    margin: 0;
+}
+
+.risk-metric-value.critical { color: var(--accent-red); }
+.risk-metric-value.warning { color: var(--accent-yellow); }
+.risk-metric-value.ok { color: var(--accent-green); }
+
+.risk-assessment {
+    font-size: 1rem;
+    font-weight: 600;
+    padding: 0.5rem 1rem;
+    border-radius: 8px;
+    transition: all var(--transition-normal);
+}
+
+.risk-assessment.critical {
+    color: var(--accent-red);
+    background: rgba(239, 68, 68, 0.15);
+    border: 1px solid rgba(239, 68, 68, 0.3);
+}
+
+.risk-assessment.warning {
+    color: var(--accent-yellow);
+    background: rgba(234, 179, 8, 0.15);
+    border: 1px solid rgba(234, 179, 8, 0.3);
+}
+
+.risk-assessment.ok {
+    color: var(--accent-green);
+    background: rgba(34, 197, 94, 0.15);
+    border: 1px solid rgba(34, 197, 94, 0.3);
+}
+</style>
 {{if and (not .HasError) .Providers}}
-<div id="riskBanner" style="margin-bottom: 1.5rem; padding: 1rem; border-radius: 12px; background: var(--bg-secondary); border: 1px solid var(--border-color);">
-    <div style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 1rem;">
-        <div style="display: flex; align-items: center; gap: 1.5rem;">
-            <div style="display: flex; align-items: center; gap: 0.5rem;">
-                <span style="font-size: 1.5rem;">🚨</span>
+<div id="riskBanner" class="risk-banner">
+    <div class="risk-banner-content">
+        <div class="risk-metrics">
+            <div class="risk-metric">
+                <span class="risk-metric-icon">🚨</span>
                 <div>
-                    <p style="font-size: 0.75rem; color: var(--text-secondary); margin: 0;">위험 상태</p>
-                    <p id="criticalCount" style="font-size: 1.25rem; font-weight: 700; color: var(--accent-red); margin: 0;">-</p>
+                    <p class="risk-metric-label">위험 상태</p>
+                    <p id="criticalCount" class="risk-metric-value critical">-</p>
                 </div>
             </div>
-            <div style="display: flex; align-items: center; gap: 0.5rem;">
-                <span style="font-size: 1.5rem;">⚠️</span>
+            <div class="risk-metric">
+                <span class="risk-metric-icon">⚠️</span>
                 <div>
-                    <p style="font-size: 0.75rem; color: var(--text-secondary); margin: 0;">주의</p>
-                    <p id="warningCount" style="font-size: 1.25rem; font-weight: 700; color: var(--accent-yellow); margin: 0;">-</p>
+                    <p class="risk-metric-label">주의</p>
+                    <p id="warningCount" class="risk-metric-value warning">-</p>
                 </div>
             </div>
-            <div style="display: flex; align-items: center; gap: 0.5rem;">
-                <span style="font-size: 1.5rem;">🕐</span>
+            <div class="risk-metric">
+                <span class="risk-metric-icon">🕐</span>
                 <div>
-                    <p style="font-size: 0.75rem; color: var(--text-secondary); margin: 0;">오래됨</p>
-                    <p id="staleCount" style="font-size: 1.25rem; font-weight: 700; color: var(--accent-yellow); margin: 0;">-</p>
+                    <p class="risk-metric-label">오래됨</p>
+                    <p id="staleCount" class="risk-metric-value warning">-</p>
                 </div>
             </div>
-            <div style="display: flex; align-items: center; gap: 0.5rem;">
-                <span style="font-size: 1.5rem;">✅</span>
+            <div class="risk-metric">
+                <span class="risk-metric-icon">✅</span>
                 <div>
-                    <p style="font-size: 0.75rem; color: var(--text-secondary); margin: 0;">정상</p>
-                    <p id="okCount" style="font-size: 1.25rem; font-weight: 700; color: var(--accent-green); margin: 0;">-</p>
+                    <p class="risk-metric-label">정상</p>
+                    <p id="okCount" class="risk-metric-value ok">-</p>
                 </div>
             </div>
         </div>
-        <div id="riskAssessment" style="font-size: 1.125rem; font-weight: 600; padding: 0.5rem 1rem; border-radius: 8px;">
+        <div id="riskAssessment" class="risk-assessment">
             <!-- Dynamic assessment -->
         </div>
     </div>
@@ -158,25 +371,20 @@ function renderProviderManagement(providers) {
 
 function providerManagementCard(p) {
     const isEnabled = p.enabled;
-    const opacity = isEnabled ? '1' : '0.55';
-    const badgeStyle = isEnabled
-        ? 'background: rgba(34,197,94,0.15); color: var(--accent-green); border: 1px solid var(--accent-green);'
-        : 'background: rgba(107,114,128,0.15); color: #9ca3af; border: 1px solid #374151;';
+    const statusClass = isEnabled ? 'enabled' : 'disabled';
     const badgeText = isEnabled ? '활성' : '비활성';
-    const btnStyle = isEnabled
-        ? 'background: rgba(239,68,68,0.15); color: var(--accent-red); border: 1px solid var(--accent-red);'
-        : 'background: rgba(34,197,94,0.15); color: var(--accent-green); border: 1px solid var(--accent-green);';
+    const btnClass = isEnabled ? 'disable' : 'enable';
     const btnText = isEnabled ? '비활성화' : '활성화';
     const btnAction = isEnabled ? 'disable' : 'enable';
 
-    return `<div id="pm-card-${p.name}" style="opacity:${opacity}; padding: 1rem; border-radius: 10px; background: var(--bg-primary); border: 1px solid var(--border-color); min-width: 160px; display: flex; flex-direction: column; gap: 0.5rem;">
-        <div style="display: flex; align-items: center; justify-content: space-between; gap: 0.5rem;">
-            <span style="font-size: 0.9rem; font-weight: 600; color: var(--text-primary);">${p.display_name || p.name}</span>
-            <span style="font-size: 0.7rem; padding: 2px 8px; border-radius: 999px; ${badgeStyle}">${badgeText}</span>
+    return `<div id="pm-card-${p.name}" class="provider-card${isEnabled ? '' : ' disabled'}">
+        <div class="provider-card-header">
+            <span class="provider-card-name">${p.display_name || p.name}</span>
+            <span class="provider-card-badge ${statusClass}">${badgeText}</span>
         </div>
-        <div style="font-size: 0.7rem; color: var(--text-secondary);">${p.auth_method || ''}</div>
+        <div class="provider-card-method">${p.auth_method || ''}</div>
         <button onclick="toggleProvider('${p.name}', '${btnAction}')"
-            style="margin-top: 0.25rem; padding: 0.35rem 0.75rem; border-radius: 6px; font-size: 0.8rem; font-weight: 600; cursor: pointer; transition: opacity 0.2s; ${btnStyle}"
+            class="provider-card-btn ${btnClass}"
             id="pm-btn-${p.name}">
             ${btnText}
         </button>
@@ -240,29 +448,26 @@ function updateRiskBanner(risk) {
     document.getElementById('okCount').textContent = risk.okCount;
     
     const assessmentEl = document.getElementById('riskAssessment');
-    let assessment, color, bg;
+    let assessment;
+    
+    // Remove existing classes
+    assessmentEl.classList.remove('critical', 'warning', 'ok');
     
     if (risk.criticalCount > 0) {
         assessment = '🔴 위험 - 즉시 조치 필요';
-        color = 'var(--accent-red)';
-        bg = 'rgba(239, 68, 68, 0.2)';
+        assessmentEl.classList.add('critical');
     } else if (risk.staleCount > 0) {
         assessment = '🟠 주의 - 데이터 오래됨';
-        color = 'var(--accent-yellow)';
-        bg = 'rgba(234, 179, 8, 0.2)';
+        assessmentEl.classList.add('warning');
     } else if (risk.warningCount > 0) {
         assessment = '🟡 관심 - 사용량 높음';
-        color = 'var(--accent-yellow)';
-        bg = 'rgba(234, 179, 8, 0.2)';
+        assessmentEl.classList.add('warning');
     } else {
         assessment = '🟢 정상 - 모든 Provider 안정적';
-        color = 'var(--accent-green)';
-        bg = 'rgba(34, 197, 94, 0.2)';
+        assessmentEl.classList.add('ok');
     }
     
     assessmentEl.textContent = assessment;
-    assessmentEl.style.color = color;
-    assessmentEl.style.background = bg;
 }
 
 function startAutoRefresh() {
