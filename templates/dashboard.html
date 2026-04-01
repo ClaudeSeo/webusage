@@ -87,25 +87,21 @@
     <div class="dashboard-grid">
         {{range .Providers}}
             {{if .LastError}}
-                {{template "providerCard" dict 
+                {{template "providerCard" dict
                     "ID" .ID
                     "Name" .Name
-                    "Used" .Used
-                    "Limit" .Limit
-                    "Remaining" .Remaining
-                    "ResetAt" .ResetAt
+                    "Enabled" .Enabled
+                    "Metrics" .Metrics
                     "CollectedAt" .CollectedAt
                     "UpdatedAt" .UpdatedAt
                     "LastError" .LastError
                 }}
             {{else}}
-                {{template "providerCard" dict 
+                {{template "providerCard" dict
                     "ID" .ID
                     "Name" .Name
-                    "Used" .Used
-                    "Limit" .Limit
-                    "Remaining" .Remaining
-                    "ResetAt" .ResetAt
+                    "Enabled" .Enabled
+                    "Metrics" .Metrics
                     "CollectedAt" .CollectedAt
                     "UpdatedAt" .UpdatedAt
                     "LastError" ""
@@ -213,23 +209,27 @@ function calculateRiskSummary(providers) {
     let warningCount = 0;
     let staleCount = 0;
     let okCount = 0;
-    
+
     providers.forEach(provider => {
-        const usagePercent = (provider.used / provider.limit) * 100;
-        const isStale = !provider.collectedAt || 
-            (new Date() - new Date(provider.collectedAt)) > (2 * 60 * 60 * 1000); // 2 hours
-        
+        // multi-metric: 가장 높은 사용률 기준으로 판단
+        const maxPercent = (provider.metrics || []).reduce((max, m) => {
+            const pct = m.limit > 0 ? (m.used / m.limit) * 100 : 0;
+            return Math.max(max, pct);
+        }, 0);
+        const isStale = !provider.collectedAt ||
+            (new Date() - new Date(provider.collectedAt)) > (2 * 60 * 60 * 1000);
+
         if (provider.lastError) {
             criticalCount++;
         } else if (isStale) {
             staleCount++;
-        } else if (usagePercent >= 80) {
+        } else if (maxPercent >= 80) {
             warningCount++;
         } else {
             okCount++;
         }
     });
-    
+
     return { criticalCount, warningCount, staleCount, okCount };
 }
 
@@ -351,8 +351,12 @@ document.addEventListener('DOMContentLoaded', function() {
                     {{if $i}},{{end}}
                     {
                         id: '{{$p.ID}}',
-                        used: {{$p.Used}},
-                        limit: {{$p.Limit}},
+                        metrics: [
+                            {{range $j, $m := $p.Metrics}}
+                                {{if $j}},{{end}}
+                                { used: {{$m.Used}}, limit: {{$m.Limit}} }
+                            {{end}}
+                        ],
                         collectedAt: '{{if $p.CollectedAt}}{{formatDateTime $p.CollectedAt}}{{end}}',
                         lastError: '{{if $p.LastError}}{{$p.LastError}}{{end}}'
                     }

@@ -182,15 +182,21 @@ func (s *Server) handleDashboard(w nethttp.ResponseWriter, r *nethttp.Request) {
 		return
 	}
 
+	type MetricView struct {
+		Name    string    // 메트릭 키 (session, weekly, credits 등)
+		Label   string    // 표시 레이블 (세션 (5h), 주간 (7d) 등)
+		Used    float64
+		Limit   float64
+		Percent float64
+		ResetAt time.Time
+	}
+
 	type ProviderView struct {
 		ID          int64
 		Name        string
 		Enabled     bool
-		Used        float64
-		Limit       float64
-		Remaining   float64
+		Metrics     []MetricView
 		CollectedAt time.Time
-		ResetAt     time.Time
 		UpdatedAt   time.Time
 		LastError   *string
 	}
@@ -205,24 +211,28 @@ func (s *Server) handleDashboard(w nethttp.ResponseWriter, r *nethttp.Request) {
 			LastError: p.LastError,
 		}
 
-		// 최신 메트릭에서 Used/Limit/ResetAt 집계
+		// 최신 메트릭을 개별 MetricView로 변환
 		snapshots, err := s.store.GetLatestUsageByProvider(p.ID)
 		if err == nil && len(snapshots) > 0 {
 			for _, snap := range snapshots {
-				view.Used += snap.Used
-				if snap.Limit != nil {
-					view.Limit += *snap.Limit
+				mv := MetricView{
+					Name:  snap.Metric,
+					Label: metricLabel(snap.Metric),
+					Used:  snap.Used,
 				}
-				if snap.ResetAt != nil && snap.ResetAt.After(view.ResetAt) {
-					view.ResetAt = *snap.ResetAt
+				if snap.Limit != nil {
+					mv.Limit = *snap.Limit
+				}
+				if mv.Limit > 0 {
+					mv.Percent = (mv.Used / mv.Limit) * 100
+				}
+				if snap.ResetAt != nil {
+					mv.ResetAt = *snap.ResetAt
 				}
 				if snap.CollectedAt.After(view.CollectedAt) {
 					view.CollectedAt = snap.CollectedAt
 				}
-			}
-			view.Remaining = view.Limit - view.Used
-			if view.Remaining < 0 {
-				view.Remaining = 0
+				view.Metrics = append(view.Metrics, mv)
 			}
 		}
 
@@ -574,4 +584,19 @@ func (s *Server) Start(ctx context.Context) error {
 		return err
 	}
 	return nil
+}
+
+// metricLabel은 메트릭 키를 한글 표시 레이블로 변환합니다
+func metricLabel(metric string) string {
+	labels := map[string]string{
+		"session":        "세션 (5h)",
+		"weekly":         "주간 (7d)",
+		"weekly_sonnet":  "주간 Sonnet",
+		"extra_credits":  "Extra 크레딧",
+		"credits":        "크레딧",
+	}
+	if label, ok := labels[metric]; ok {
+		return label
+	}
+	return metric
 }

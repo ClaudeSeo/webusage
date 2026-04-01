@@ -1,5 +1,4 @@
 {{define "providerCard"}}
-{{$disabled := and (not .Enabled) (not (eq .Enabled true))}}
 <div class="card" data-provider-id="{{.ID}}" {{if not .Enabled}}style="opacity: 0.5;"{{end}}>
     <div class="card-header">
         <h3 class="card-title">{{.Name}}</h3>
@@ -9,43 +8,43 @@
             <span class="card-status status-error">에러</span>
         {{else if isStale .CollectedAt}}
             <span class="card-status status-warning">오래됨</span>
-        {{else if ge (mulf (divf .Used .Limit) 100) 80}}
-            <span class="card-status status-warning">주의</span>
         {{else}}
             <span class="card-status status-ok">정상</span>
         {{end}}
     </div>
-    
-    <div class="metric-row">
-        <span class="metric-label">사용량</span>
-        <span class="metric-value">{{formatNumber .Used}} / {{formatNumber .Limit}}</span>
-    </div>
-    
-    <div class="metric-row">
-        <span class="metric-label">잔여량</span>
-        <span class="metric-value">{{formatNumber .Remaining}}</span>
-    </div>
-    
-    <div class="metric-row">
-        <span class="metric-label">사용률</span>
-        <span class="metric-value">{{printf "%.1f" (mulf (divf .Used .Limit) 100)}}%</span>
-    </div>
-    
-    <div class="progress-container">
-        <div class="progress-bar {{getUsageClass (mulf (divf .Used .Limit) 100)}}" 
-             style="width: {{printf "%.1f" (mulf (divf .Used .Limit) 100)}}%"></div>
-    </div>
-    
-    <div class="metric-row" style="margin-top: 1rem;">
+
+    {{if .Metrics}}
+        {{range .Metrics}}
+        <div style="margin-bottom: 1rem;">
+            <div class="metric-row">
+                <span class="metric-label">{{.Label}}</span>
+                <span class="metric-value">{{printf "%.1f" .Used}} / {{formatNumber .Limit}}</span>
+            </div>
+
+            <div class="progress-container">
+                <div class="progress-bar {{getUsageClass .Percent}}"
+                     style="width: {{printf "%.1f" .Percent}}%"></div>
+            </div>
+
+            <div style="display: flex; justify-content: space-between; margin-top: 0.25rem;">
+                <span style="font-size: 0.7rem; color: var(--text-secondary);">{{printf "%.1f" .Percent}}%</span>
+                {{if not .ResetAt.IsZero}}
+                <span style="font-size: 0.7rem; color: var(--text-secondary);">리셋: {{formatDateTime .ResetAt}}</span>
+                {{end}}
+            </div>
+        </div>
+        {{end}}
+    {{else}}
+        <div style="padding: 1rem 0; color: var(--text-secondary); font-size: 0.8rem; text-align: center;">
+            수집된 데이터 없음
+        </div>
+    {{end}}
+
+    <div class="metric-row" style="margin-top: 0.5rem;">
         <span class="metric-label">마지막 수집</span>
         <span class="metric-value">{{formatDateTime .CollectedAt}}</span>
     </div>
-    
-    <div class="metric-row">
-        <span class="metric-label">다음 리셋</span>
-        <span class="metric-value">{{formatDateTime .ResetAt}}</span>
-    </div>
-    
+
     {{if .LastError}}
         <div style="margin-top: 1rem; padding: 0.75rem; background: rgba(239, 68, 68, 0.1); border-radius: 8px; border-left: 3px solid var(--accent-red);">
             <p style="font-size: 0.75rem; color: var(--accent-red); font-weight: 600;">⚠️ 수집 실패</p>
@@ -57,10 +56,10 @@
             <p style="font-size: 0.75rem; color: var(--text-secondary); margin-top: 0.25rem;">마지막 수집: {{formatDateTime .CollectedAt}}</p>
         </div>
     {{end}}
-    
+
     <div class="timestamp">
         {{if isStale .CollectedAt}}
-            ⚠️ 오래됨: 
+            ⚠️ 오래됨:
         {{end}}
         업데이트: {{formatDateTime .UpdatedAt}}
     </div>

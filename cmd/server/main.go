@@ -14,6 +14,7 @@ import (
 	internalhttp "github.com/ClaudeSeo/webusage/internal/http"
 	"github.com/ClaudeSeo/webusage/internal/provider"
 	"github.com/ClaudeSeo/webusage/internal/provider/claude"
+	"github.com/ClaudeSeo/webusage/internal/provider/codex"
 	"github.com/ClaudeSeo/webusage/internal/provider/copilot"
 	"github.com/ClaudeSeo/webusage/internal/provider/cursor"
 	"github.com/ClaudeSeo/webusage/internal/provider/gemini"
@@ -124,6 +125,7 @@ func setupProviders(cfg *config.Config, registry *provider.Registry, s *store.St
 
 	providers := []provider.Provider{
 		claude.New(),
+		codex.New(),
 		copilot.New(),
 		cursor.New(cursorOpts...),
 		gemini.New(geminiOpts...),
