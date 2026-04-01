@@ -9,7 +9,7 @@
             <span class="card-status status-error">에러</span>
         {{else if isStale .CollectedAt}}
             <span class="card-status status-warning">오래됨</span>
-        {{else if ge (divf (mul (float64 .Used) 100) (float64 .Limit)) 80}}
+        {{else if ge (mulf (divf .Used .Limit) 100) 80}}
             <span class="card-status status-warning">주의</span>
         {{else}}
             <span class="card-status status-ok">정상</span>
@@ -28,12 +28,12 @@
     
     <div class="metric-row">
         <span class="metric-label">사용률</span>
-        <span class="metric-value">{{printf "%.1f" (divf (mul (float64 .Used) 100) (float64 .Limit))}}%</span>
+        <span class="metric-value">{{printf "%.1f" (mulf (divf .Used .Limit) 100)}}%</span>
     </div>
     
     <div class="progress-container">
-        <div class="progress-bar {{getUsageClass (divf (mul (float64 .Used) 100) (float64 .Limit))}}" 
-             style="width: {{printf "%.1f" (divf (mul (float64 .Used) 100) (float64 .Limit))}}%"></div>
+        <div class="progress-bar {{getUsageClass (mulf (divf .Used .Limit) 100)}}" 
+             style="width: {{printf "%.1f" (mulf (divf .Used .Limit) 100)}}%"></div>
     </div>
     
     <div class="metric-row" style="margin-top: 1rem;">

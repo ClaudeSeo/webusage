@@ -137,6 +137,9 @@ func (s *Server) loadTemplates() error {
 		"mul": func(a, b int) int {
 			return a * b
 		},
+		"mulf": func(a, b float64) float64 {
+			return a * b
+		},
 		"mod": func(a, b int) int {
 			return a % b
 		},
@@ -181,9 +184,9 @@ func (s *Server) handleDashboard(w nethttp.ResponseWriter, r *nethttp.Request) {
 		ID          int64
 		Name        string
 		Enabled     bool
-		Used        int64
-		Limit       int64
-		Remaining   int64
+		Used        float64
+		Limit       float64
+		Remaining   float64
 		CollectedAt time.Time
 		ResetAt     time.Time
 		UpdatedAt   time.Time
@@ -204,9 +207,9 @@ func (s *Server) handleDashboard(w nethttp.ResponseWriter, r *nethttp.Request) {
 		snapshots, err := s.store.GetLatestUsageByProvider(p.ID)
 		if err == nil && len(snapshots) > 0 {
 			for _, snap := range snapshots {
-				view.Used += int64(snap.Used)
+				view.Used += snap.Used
 				if snap.Limit != nil {
-					view.Limit += int64(*snap.Limit)
+					view.Limit += *snap.Limit
 				}
 				if snap.ResetAt != nil && snap.ResetAt.After(view.ResetAt) {
 					view.ResetAt = *snap.ResetAt
