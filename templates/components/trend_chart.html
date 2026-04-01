@@ -1,8 +1,48 @@
 {{define "trendChart"}}
-<div class="chart-container">
-    <div class="chart-header">
-        <h3 class="chart-title">📈 사용량 추이</h3>
-        <div class="chart-controls">
+<style>
+.trend-chart-container {
+    background: var(--bg-secondary);
+    border-radius: 16px;
+    padding: 1.5rem;
+    border: 1px solid var(--border-color);
+    margin-bottom: 2rem;
+    animation: fadeInUp 0.4s ease 0.25s backwards;
+}
+
+.trend-chart-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 1rem;
+    flex-wrap: wrap;
+    gap: 1rem;
+}
+
+.trend-chart-title {
+    font-size: 1.125rem;
+    font-weight: 600;
+}
+
+.trend-chart-controls {
+    display: flex;
+    gap: 0.5rem;
+}
+
+.trend-chart-canvas-wrapper {
+    position: relative;
+    height: 400px;
+}
+
+.trend-chart-error {
+    text-align: center;
+    color: var(--accent-red);
+    padding: 2rem;
+}
+</style>
+<div class="trend-chart-container">
+    <div class="trend-chart-header">
+        <h3 class="trend-chart-title">📈 사용량 추이</h3>
+        <div class="trend-chart-controls">
             <button class="btn {{if eq .Range "24h"}}btn-primary{{end}}" 
                     onclick="loadTrendData('24h')" 
                     data-range="24h">24h</button>
@@ -15,7 +55,7 @@
         </div>
     </div>
     
-    <div style="position: relative; height: 400px;">
+    <div class="trend-chart-canvas-wrapper">
         <canvas id="trendChart"></canvas>
     </div>
 </div>
@@ -37,14 +77,17 @@ async function loadTrendData(range = '{{.Range}}') {
         renderTrendChart(data, range);
         
         // Update button states
-        document.querySelectorAll('.chart-controls .btn').forEach(btn => {
+        document.querySelectorAll('.trend-chart-controls .btn').forEach(btn => {
             btn.classList.toggle('btn-primary', btn.dataset.range === range);
         });
     } catch (error) {
         console.error('추이 데이터 로드 오류:', error);
-        const container = document.querySelector('.chart-container');
+        const container = document.querySelector('.trend-chart-container');
         if (container) {
-            container.innerHTML = '<div style="text-align:center;color:var(--accent-red);padding:2rem;">추이 데이터를 불러올 수 없습니다.</div>';
+            const canvasWrapper = container.querySelector('.trend-chart-canvas-wrapper');
+            if (canvasWrapper) {
+                canvasWrapper.innerHTML = '<div class="trend-chart-error">추이 데이터를 불러올 수 없습니다.</div>';
+            }
         }
     }
 }
