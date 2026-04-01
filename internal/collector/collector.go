@@ -19,7 +19,6 @@ import (
 type Collector struct {
 	store          *store.Store
 	registry       *provider.Registry
-	providers      map[string]provider.Provider
 	interval       time.Duration
 	logger         *slog.Logger
 	jobLocks       sync.Map
@@ -39,25 +38,18 @@ type JobState struct {
 // NewCollector creates a new usage collector
 func NewCollector(
 	s *store.Store,
-	providers []provider.Provider,
+	registry *provider.Registry,
 	interval time.Duration,
 	logger *slog.Logger,
-	registry *provider.Registry,
 ) *Collector {
-	provMap := make(map[string]provider.Provider)
-	for _, p := range providers {
-		provMap[p.Name()] = p
-	}
-
 	return &Collector{
 		store:          s,
 		registry:       registry,
-		providers:      provMap,
 		interval:       interval,
 		logger:         logger,
 		maxRetries:     3,
 		initialBackoff: 5 * time.Second,
-		maxTimeout:     60 * time.Second, // Per-job timeout
+		maxTimeout:     60 * time.Second,
 	}
 }
 
@@ -65,7 +57,7 @@ func NewCollector(
 func (c *Collector) Start(ctx context.Context) error {
 	c.logger.Info("Starting usage collector",
 		"interval", c.interval.String(),
-		"providers", len(c.providers))
+		"providers", len(c.registry.List()))
 
 	ticker := time.NewTicker(c.interval)
 	defer ticker.Stop()
@@ -121,7 +113,8 @@ func (c *Collector) collectProvider(ctx context.Context, p *store.Provider) {
 	}
 	defer c.unlock(p.Name)
 
-	prov, exists := c.providers[p.Name]
+	// registry에서 provider 인스턴스 조회 (런타임 enable/disable 반영)
+	prov, exists := c.registry.Get(p.Name)
 	if !exists {
 		c.logger.Warn("Provider not found in registry", "provider", p.Name)
 		return

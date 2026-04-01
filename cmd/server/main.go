@@ -77,7 +77,8 @@ func main() {
 	httpServer.SetRegistry(registry)
 
 	// collector는 DB의 enabled 상태를 기준으로 수집 — registry는 인증 에러 시 런타임 비활성화에 사용
-	coll := collector.NewCollector(s, registry.ListEnabled(), cfg.CollectionInterval, logger, registry)
+	// registry에서 직접 provider 조회 — 런타임 enable/disable 반영
+	coll := collector.NewCollector(s, registry, cfg.CollectionInterval, logger)
 
 	// Run both services
 	errChan := make(chan error, 2)
