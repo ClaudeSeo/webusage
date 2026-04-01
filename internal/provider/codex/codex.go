@@ -184,9 +184,24 @@ func (p *CodexProvider) RefreshAuth(ctx context.Context) error {
 	return nil
 }
 
+// newUsageRequest는 usage API 요청을 생성합니다 (헤더 설정 포함)
+func (p *CodexProvider) newUsageRequest(ctx context.Context, token *oauth.Token, auth *codexAuth) (*http.Request, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, p.usageURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+token.AccessToken)
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("User-Agent", "OpenUsage")
+	if auth != nil && auth.Tokens != nil && auth.Tokens.AccountID != "" {
+		req.Header.Set("ChatGPT-Account-Id", auth.Tokens.AccountID)
+	}
+	return req, nil
+}
+
 // FetchUsage는 Codex usage API에서 사용량을 조회합니다.
 // Header 값을 우선하고, 없으면 body 값을 사용합니다.
-// 에러 발생 시 graceful degradation으로 빈 결과를 반환합니다.
+// 401 응답 시 refresh_token으로 재시도하며, 실패 시 에러를 반환합니다.
 func (p *CodexProvider) FetchUsage(ctx context.Context) ([]provider.UsagePoint, error) {
 	token, auth, err := p.getValidToken(ctx)
 	if err != nil {
@@ -195,19 +210,10 @@ func (p *CodexProvider) FetchUsage(ctx context.Context) ([]provider.UsagePoint, 
 		return []provider.UsagePoint{}, nil
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, p.usageURL, nil)
+	req, err := p.newUsageRequest(ctx, token, auth)
 	if err != nil {
 		p.logger.Printf("failed to create usage request: %v", err)
 		return []provider.UsagePoint{}, nil
-	}
-
-	req.Header.Set("Authorization", "Bearer "+token.AccessToken)
-	req.Header.Set("Accept", "application/json")
-	req.Header.Set("User-Agent", "OpenUsage")
-
-	// account_id가 있으면 헤더에 포함
-	if auth != nil && auth.Tokens != nil && auth.Tokens.AccountID != "" {
-		req.Header.Set("ChatGPT-Account-Id", auth.Tokens.AccountID)
 	}
 
 	resp, err := p.httpClient.Do(req)
@@ -217,9 +223,29 @@ func (p *CodexProvider) FetchUsage(ctx context.Context) ([]provider.UsagePoint, 
 	}
 	defer resp.Body.Close()
 
+	// 401 응답 시 refresh_token으로 재시도
+	if resp.StatusCode == http.StatusUnauthorized {
+		if token.RefreshToken == "" {
+			return nil, fmt.Errorf("codex: usage endpoint returned 401 and no refresh token available")
+		}
+		if refreshErr := p.refreshToken(ctx, token); refreshErr != nil {
+			return nil, fmt.Errorf("codex: token refresh failed after 401: %w", refreshErr)
+		}
+		retryReq, retryErr := p.newUsageRequest(ctx, token, auth)
+		if retryErr != nil {
+			return nil, fmt.Errorf("codex: failed to create retry request: %w", retryErr)
+		}
+		retryResp, retryErr := p.httpClient.Do(retryReq)
+		if retryErr != nil {
+			return nil, fmt.Errorf("codex: retry request failed: %w", retryErr)
+		}
+		resp.Body.Close()
+		resp = retryResp
+		defer resp.Body.Close()
+	}
+
 	if resp.StatusCode != http.StatusOK {
-		p.logger.Printf("usage endpoint returned %d", resp.StatusCode)
-		return []provider.UsagePoint{}, nil
+		return nil, fmt.Errorf("codex: usage endpoint returned %d", resp.StatusCode)
 	}
 
 	var body usageResponseBody
@@ -419,8 +445,9 @@ func (p *CodexProvider) getValidToken(ctx context.Context) (*oauth.Token, *codex
 		return nil, nil, fmt.Errorf("no credentials available")
 	}
 
-	// 선제적 갱신: last_refresh 기준 8일 초과 시
-	if auth != nil && needsRefreshByAge(auth.LastRefresh) && token.RefreshToken != "" {
+	// 선제적 갱신: last_refresh 8일 초과 또는 ExpiresAt 미설정 시 항상 갱신 시도
+	shouldRefresh := (auth != nil && needsRefreshByAge(auth.LastRefresh)) || token.ExpiresAt == nil
+	if shouldRefresh && token.RefreshToken != "" {
 		if refreshErr := p.refreshToken(ctx, token); refreshErr != nil {
 			// 갱신 실패 시 현재 토큰으로 계속 시도
 			p.logger.Printf("token refresh failed (using current): %v", refreshErr)

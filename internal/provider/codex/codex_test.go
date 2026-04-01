@@ -250,8 +250,8 @@ func TestCodexProvider_FetchUsage_WithCredits(t *testing.T) {
 	}
 }
 
-// TestCodexProvider_FetchUsage_GracefulDegradation은 usage 엔드포인트 오류 시 빈 결과를 반환하는지 검증합니다
-func TestCodexProvider_FetchUsage_GracefulDegradation(t *testing.T) {
+// TestCodexProvider_FetchUsage_NonOKReturnsError는 usage 엔드포인트 5xx 오류 시 에러를 반환하는지 검증합니다
+func TestCodexProvider_FetchUsage_NonOKReturnsError(t *testing.T) {
 	client := mockClient(simpleHandler(http.StatusInternalServerError, `{"error":"internal error"}`))
 
 	store := newMockCredentialStore()
@@ -266,13 +266,10 @@ func TestCodexProvider_FetchUsage_GracefulDegradation(t *testing.T) {
 		WithSkipSystemCreds(),
 	)
 
-	points, err := p.FetchUsage(context.Background())
-	// graceful degradation: error는 nil, 빈 결과 반환
-	if err != nil {
-		t.Errorf("FetchUsage() should not return error on degradation, got: %v", err)
-	}
-	if len(points) != 0 {
-		t.Errorf("FetchUsage() returned %d points, want 0", len(points))
+	_, err := p.FetchUsage(context.Background())
+	// non-200 응답 시 에러 반환 (collector가 실패를 인지할 수 있도록)
+	if err == nil {
+		t.Error("FetchUsage() should return error on non-200 response, got nil")
 	}
 }
 
