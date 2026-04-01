@@ -94,9 +94,21 @@
         /* Dashboard grid with animation */
         .dashboard-grid {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+            grid-template-columns: repeat(3, 1fr);
             gap: 1.5rem;
             margin-bottom: 2rem;
+        }
+        
+        @media (max-width: 1200px) {
+            .dashboard-grid {
+                grid-template-columns: repeat(2, 1fr);
+            }
+        }
+        
+        @media (max-width: 768px) {
+            .dashboard-grid {
+                grid-template-columns: 1fr;
+            }
         }
         
         /* Card component */
@@ -145,6 +157,12 @@
             font-size: 1.125rem;
             font-weight: 600;
             color: var(--text-primary);
+        }
+        
+        .card-subtitle {
+            font-size: 0.875rem;
+            color: var(--text-secondary);
+            margin-top: 0.25rem;
         }
         
         .card-status {
@@ -343,13 +361,26 @@
             border-left: 1px solid var(--border-color);
             box-shadow: -8px 0 24px rgba(0, 0, 0, 0.5);
             z-index: 1001;
-            transition: right 0.3s ease;
+            transition: right 0.3s cubic-bezier(0.4, 0, 0.2, 1);
             display: flex;
             flex-direction: column;
         }
         
         .settings-drawer.open {
             right: 0;
+        }
+        
+        @keyframes slideInRight {
+            from {
+                transform: translateX(100%);
+            }
+            to {
+                transform: translateX(0);
+            }
+        }
+        
+        .settings-drawer.open {
+            animation: slideInRight 0.3s cubic-bezier(0.4, 0, 0.2, 1);
         }
         
         .drawer-header {
@@ -427,6 +458,52 @@
             color: white;
         }
         
+        /* Switch Component (shadcn style) */
+        .switch-container {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0.75rem 0;
+        }
+        
+        .switch-label {
+            font-size: 0.875rem;
+            color: var(--text-primary);
+        }
+        
+        .switch {
+            position: relative;
+            width: 44px;
+            height: 24px;
+            background: var(--bg-card);
+            border-radius: 9999px;
+            border: 1px solid var(--border-color);
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+        
+        .switch::after {
+            content: '';
+            position: absolute;
+            top: 2px;
+            left: 2px;
+            width: 18px;
+            height: 18px;
+            background: var(--text-muted);
+            border-radius: 9999px;
+            transition: all 0.2s ease;
+        }
+        
+        .switch.active {
+            background: var(--accent-blue);
+            border-color: var(--accent-blue);
+        }
+        
+        .switch.active::after {
+            transform: translateX(20px);
+            background: white;
+        }
+        
         .drawer-provider-cards {
             display: flex;
             flex-direction: column;
@@ -499,6 +576,8 @@
             width: 100vw;
             height: 100vh;
             background: rgba(0, 0, 0, 0.5);
+            backdrop-filter: blur(4px);
+            -webkit-backdrop-filter: blur(4px);
             z-index: 1000;
             opacity: 0;
             pointer-events: none;
@@ -534,10 +613,13 @@
             <!-- Gauge Mode Toggle -->
             <div class="setting-section">
                 <h3>📊 게이지바 표시 방식</h3>
-                <div class="toggle-group">
-                    <button id="gaugeLeft" class="toggle-btn active" onclick="setGaugeMode('left')">남은량</button>
-                    <button id="gaugeUsage" class="toggle-btn" onclick="setGaugeMode('usage')">사용량</button>
+                <div class="switch-container">
+                    <span class="switch-label">남은량 기준</span>
+                    <div id="gaugeModeSwitch" class="switch active" onclick="toggleGaugeMode()"></div>
                 </div>
+                <p style="font-size: 0.75rem; color: var(--text-muted); margin-top: 0.25rem;">
+                    OFF: 남은량 / ON: 사용량
+                </p>
             </div>
             
             <!-- Provider Management -->
@@ -615,12 +697,19 @@
             gaugeMode = mode;
             localStorage.setItem('gaugeMode', mode);
             
-            // Update toggle buttons
-            document.getElementById('gaugeLeft').classList.toggle('active', mode === 'left');
-            document.getElementById('gaugeUsage').classList.toggle('active', mode === 'usage');
+            // Update switch state
+            const switchEl = document.getElementById('gaugeModeSwitch');
+            if (switchEl) {
+                switchEl.classList.toggle('active', mode === 'usage');
+            }
             
             // Refresh all progress bars
             refreshProgressBars();
+        }
+        
+        function toggleGaugeMode() {
+            const newMode = gaugeMode === 'left' ? 'usage' : 'left';
+            setGaugeMode(newMode);
         }
         
         function refreshProgressBars() {

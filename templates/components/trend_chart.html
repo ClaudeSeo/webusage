@@ -23,9 +23,33 @@
     font-weight: 600;
 }
 
-.trend-chart-controls {
+.trend-chart-tabs {
     display: flex;
-    gap: 0.5rem;
+    background: var(--bg-card);
+    border-radius: var(--radius-md);
+    padding: 4px;
+    border: 1px solid var(--border-color);
+}
+
+.trend-chart-tab {
+    padding: 0.5rem 1rem;
+    border-radius: calc(var(--radius-md) - 2px);
+    font-size: 0.875rem;
+    font-weight: 500;
+    cursor: pointer;
+    border: none;
+    background: transparent;
+    color: var(--text-secondary);
+    transition: all 0.2s ease;
+}
+
+.trend-chart-tab:hover {
+    color: var(--text-primary);
+}
+
+.trend-chart-tab.active {
+    background: var(--accent-blue);
+    color: white;
 }
 
 .trend-chart-canvas-wrapper {
@@ -42,14 +66,14 @@
 <div class="trend-chart-container">
     <div class="trend-chart-header">
         <h3 class="trend-chart-title">📈 사용량 추이</h3>
-        <div class="trend-chart-controls">
-            <button class="btn {{if eq .Range "24h"}}btn-primary{{end}}" 
+        <div class="trend-chart-tabs">
+            <button class="trend-chart-tab {{if eq .Range "24h"}}active{{end}}" 
                     onclick="loadTrendData('24h')" 
                     data-range="24h">24h</button>
-            <button class="btn {{if eq .Range "7d"}}btn-primary{{end}}" 
+            <button class="trend-chart-tab {{if eq .Range "7d"}}active{{end}}" 
                     onclick="loadTrendData('7d')" 
                     data-range="7d">7d</button>
-            <button class="btn {{if eq .Range "30d"}}btn-primary{{end}}" 
+            <button class="trend-chart-tab {{if eq .Range "30d"}}active{{end}}" 
                     onclick="loadTrendData('30d')" 
                     data-range="30d">30d</button>
         </div>
@@ -76,9 +100,9 @@ async function loadTrendData(range = '{{.Range}}') {
         const data = await response.json();
         renderTrendChart(data, range);
         
-        // Update button states
-        document.querySelectorAll('.trend-chart-controls .btn').forEach(btn => {
-            btn.classList.toggle('btn-primary', btn.dataset.range === range);
+        // Update tab states
+        document.querySelectorAll('.trend-chart-tab').forEach(tab => {
+            tab.classList.toggle('active', tab.dataset.range === range);
         });
     } catch (error) {
         console.error('추이 데이터 로드 오류:', error);
