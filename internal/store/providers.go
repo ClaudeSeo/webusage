@@ -194,6 +194,18 @@ func (s *Store) DeleteProvider(id int64) error {
 	return err
 }
 
+// DeleteProviderByName removes a provider and its usage data by name
+func (s *Store) DeleteProviderByName(name string) error {
+	_, err := s.db.Exec(`
+		DELETE FROM usage_snapshots WHERE provider_id IN (SELECT id FROM providers WHERE name = ?)
+	`, name)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.Exec(`DELETE FROM providers WHERE name = ?`, name)
+	return err
+}
+
 // ProviderConfig helpers
 
 // ProviderConfigDB는 provider 인증 방식과 자격증명 출처를 저장합니다.

@@ -66,10 +66,11 @@ func TestClaudeProvider_Name(t *testing.T) {
 }
 
 func TestClaudeProvider_FetchUsage_Success(t *testing.T) {
+	// API는 utilization을 0~100 퍼센트로 반환 (예: 45.0 = 45%)
 	usageResp := usageResponse{
-		FiveHour:       &usageWindow{Utilization: 0.45, ResetsAt: "2026-04-01T15:00:00Z"},
-		SevenDay:       &usageWindow{Utilization: 0.72, ResetsAt: "2026-04-07T00:00:00Z"},
-		SevenDaySonnet: &usageWindow{Utilization: 0.30, ResetsAt: "2026-04-07T00:00:00Z"},
+		FiveHour:       &usageWindow{Utilization: 45.0, ResetsAt: "2026-04-01T15:00:00Z"},
+		SevenDay:       &usageWindow{Utilization: 72.0, ResetsAt: "2026-04-07T00:00:00Z"},
+		SevenDaySonnet: &usageWindow{Utilization: 30.0, ResetsAt: "2026-04-07T00:00:00Z"},
 		ExtraUsage:     &extraUsage{IsEnabled: true, UsedCredits: 5.50, MonthlyLimit: 100.0},
 	}
 	body, _ := json.Marshal(usageResp)

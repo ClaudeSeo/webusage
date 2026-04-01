@@ -135,12 +135,26 @@ func setupProviders(cfg *config.Config, registry *provider.Registry, s *store.St
 		}
 	}
 
-	// DB의 enabled 상태를 Registry에 동기화 (서버 재시작 시 활성화 유지)
+	// DB의 enabled 상태를 Registry에 동기화 + 제거된 provider DB 정리
+	registeredNames := make(map[string]bool)
+	for _, p := range providers {
+		registeredNames[p.Name()] = true
+	}
+
 	dbProviders, err := s.ListProviders()
 	if err != nil {
 		logger.Error("Failed to list providers for sync", "error", err)
 	} else {
 		for _, dp := range dbProviders {
+			if !registeredNames[dp.Name] {
+				// 코드에서 제거된 provider → DB에서도 삭제
+				if err := s.DeleteProviderByName(dp.Name); err != nil {
+					logger.Error("Failed to cleanup removed provider", "provider", dp.Name, "error", err)
+				} else {
+					logger.Info("Cleaned up removed provider from DB", "provider", dp.Name)
+				}
+				continue
+			}
 			if dp.Enabled {
 				if err := registry.SetEnabled(dp.Name, true); err != nil {
 					logger.Warn("Failed to sync enabled state", "provider", dp.Name, "error", err)
