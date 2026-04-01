@@ -299,6 +299,26 @@ function calculateCumulativeValues(data, providerName) {
     }));
 }
 
+function calculateMovingAverage(values, windowSize) {
+    const result = [];
+    for (let i = 0; i < values.length; i++) {
+        if (i < windowSize - 1) {
+            result.push(null);
+        } else {
+            let sum = 0;
+            let count = 0;
+            for (let j = 0; j < windowSize; j++) {
+                if (values[i - j] !== null) {
+                    sum += values[i - j];
+                    count++;
+                }
+            }
+            result.push(count > 0 ? sum / count : null);
+        }
+    }
+    return result;
+}
+
 function renderProviderFilters(data) {
     const container = document.getElementById('providerFilters');
     const providers = Object.keys(data);
@@ -420,21 +440,41 @@ function renderTrendChart(data, range) {
         });
         
         // Determine chart type based on range
-        const chartType = range === '24h' ? 'bar' : 'line';
+        // 24h: Bar, 7d: Bar, 30d: Line
+        const chartType = (range === '24h' || range === '7d') ? 'bar' : 'line';
         
         datasets.push({
             label: displayName,
             data: values,
             borderColor: color.border,
             backgroundColor: chartType === 'bar' ? color.border : color.bg,
-            borderWidth: range === '24h' ? 1 : 2,
+            borderWidth: (range === '24h' || range === '7d') ? 1 : 2,
             tension: 0.4,
-            fill: range === '30d',
+            fill: false,
             pointRadius: range === '30d' ? 3 : 0,
             pointHoverRadius: 5,
             type: chartType,
             order: index
         });
+        
+        // Add 7-day moving average for 30d range
+        if (range === '30d' && values.length >= 7) {
+            const movingAvg = calculateMovingAverage(values, 7);
+            datasets.push({
+                label: displayName + ' (7일 평균)',
+                data: movingAvg,
+                borderColor: color.border,
+                backgroundColor: 'transparent',
+                borderWidth: 2,
+                borderDash: [5, 5],
+                tension: 0.4,
+                fill: false,
+                pointRadius: 0,
+                pointHoverRadius: 3,
+                type: 'line',
+                order: index + 100 // Render on top
+            });
+        }
         
         // Track limit for reference lines
         if (providerData.limit && providerData.limit > 0) {
