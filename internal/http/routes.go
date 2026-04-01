@@ -8,6 +8,7 @@ func (s *Server) setupRoutes() {
 	s.mux.HandleFunc("/api/providers", s.handleProviders)
 	// /api/providers/{name}/enable, /api/providers/{name}/disable
 	s.mux.HandleFunc("/api/providers/", s.handleProviderAction)
+	s.mux.HandleFunc("/api/collect", s.handleCollect)
 	s.mux.HandleFunc("/healthz", s.handleHealthz)
 
 	// Web UI

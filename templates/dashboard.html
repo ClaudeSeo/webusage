@@ -16,7 +16,10 @@
 <div id="providerManagement" style="margin-bottom: 2rem; padding: 1.25rem; border-radius: 12px; background: var(--bg-secondary); border: 1px solid var(--border-color);">
     <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 1rem;">
         <h2 style="font-size: 1rem; font-weight: 600; margin: 0; color: var(--text-primary);">Provider 관리</h2>
-        <span style="font-size: 0.75rem; color: var(--text-secondary);">활성화된 Provider만 사용량을 수집합니다</span>
+        <div style="display: flex; align-items: center; gap: 0.75rem;">
+            <button onclick="refreshAll()" id="refreshBtn" class="btn" style="font-size: 0.75rem; padding: 0.35rem 0.75rem;">🔄 새로고침</button>
+            <span style="font-size: 0.75rem; color: var(--text-secondary);">활성화된 Provider만 사용량을 수집합니다</span>
+        </div>
     </div>
     <div id="providerManagementCards" style="display: flex; flex-wrap: wrap; gap: 0.75rem;">
         <div style="color: var(--text-secondary); font-size: 0.875rem;">로딩 중...</div>
@@ -120,6 +123,21 @@
 {{end}}
 
 <script>
+// 새로고침: 모든 enabled provider 즉시 수집 후 페이지 리로드
+async function refreshAll() {
+    const btn = document.getElementById('refreshBtn');
+    btn.disabled = true;
+    btn.textContent = '⏳ 수집 중...';
+    try {
+        await fetch('/api/collect', { method: 'POST' });
+        // 수집 완료 대기 후 페이지 새로고침
+        setTimeout(() => location.reload(), 3000);
+    } catch (e) {
+        btn.textContent = '❌ 실패';
+        setTimeout(() => { btn.textContent = '🔄 새로고침'; btn.disabled = false; }, 2000);
+    }
+}
+
 // Provider 관리 UI
 async function loadProviderManagement() {
     try {

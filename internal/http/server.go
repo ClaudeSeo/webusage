@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ClaudeSeo/webusage/internal/collector"
 	"github.com/ClaudeSeo/webusage/internal/provider"
 	"github.com/ClaudeSeo/webusage/internal/stats"
 	"github.com/ClaudeSeo/webusage/internal/store"
@@ -21,6 +22,7 @@ import (
 type Server struct {
 	store       *store.Store
 	registry    *provider.Registry
+	collector   *collector.Collector
 	host        string
 	port        int
 	logger      *slog.Logger
@@ -336,6 +338,11 @@ func (s *Server) SetRegistry(r *provider.Registry) {
 	s.registry = r
 }
 
+// SetCollector는 Collector를 주입합니다 (즉시 수집, 새로고침 기능)
+func (s *Server) SetCollector(c *collector.Collector) {
+	s.collector = c
+}
+
 // handleProviders returns list of configured providers, including registry metadata if available
 func (s *Server) handleProviders(w nethttp.ResponseWriter, r *nethttp.Request) {
 	if r.Method != nethttp.MethodGet {
@@ -451,6 +458,15 @@ func (s *Server) handleEnableProvider(w nethttp.ResponseWriter, r *nethttp.Reque
 		s.logger.Warn("Failed to set registry enabled state", "provider", name, "error", err)
 	}
 
+	// 활성화 직후 즉시 수집 트리거
+	if s.collector != nil {
+		go func() {
+			if err := s.collector.CollectSingle(context.Background(), name); err != nil {
+				s.logger.Warn("Immediate collection after enable failed", "provider", name, "error", err)
+			}
+		}()
+	}
+
 	dbProvider, err := s.store.GetProviderByName(name)
 	if err != nil {
 		s.jsonError(w, "Provider enabled but failed to fetch updated state", nethttp.StatusInternalServerError)
@@ -479,6 +495,30 @@ func (s *Server) handleDisableProvider(w nethttp.ResponseWriter, r *nethttp.Requ
 	s.jsonResponse(w, map[string]interface{}{
 		"name":    name,
 		"enabled": false,
+	})
+}
+
+// handleCollect는 모든 enabled provider의 즉시 수집을 트리거합니다 (새로고침 버튼용)
+func (s *Server) handleCollect(w nethttp.ResponseWriter, r *nethttp.Request) {
+	if r.Method != nethttp.MethodPost {
+		nethttp.Error(w, "Method not allowed", nethttp.StatusMethodNotAllowed)
+		return
+	}
+
+	if s.collector == nil {
+		s.jsonError(w, "Collector not available", nethttp.StatusInternalServerError)
+		return
+	}
+
+	go func() {
+		if err := s.collector.CollectAll(context.Background()); err != nil {
+			s.logger.Error("Manual collection failed", "error", err)
+		}
+	}()
+
+	s.jsonResponse(w, map[string]interface{}{
+		"status":  "collecting",
+		"message": "Collection triggered for all enabled providers",
 	})
 }
 

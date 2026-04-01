@@ -80,6 +80,24 @@ func (c *Collector) Start(ctx context.Context) error {
 	}
 }
 
+// CollectSingle은 특정 provider에 대해 즉시 수집을 실행합니다 (활성화 직후 호출용)
+func (c *Collector) CollectSingle(ctx context.Context, providerName string) error {
+	dbProvider, err := c.store.GetProviderByName(providerName)
+	if err != nil {
+		return fmt.Errorf("provider %q not found in DB: %w", providerName, err)
+	}
+	if !dbProvider.Enabled {
+		return fmt.Errorf("provider %q is not enabled", providerName)
+	}
+	c.collectProvider(ctx, dbProvider)
+	return nil
+}
+
+// CollectAll은 모든 enabled provider에 대해 즉시 수집을 실행합니다 (새로고침 버튼용)
+func (c *Collector) CollectAll(ctx context.Context) error {
+	return c.collectAll(ctx)
+}
+
 // collectAll triggers collection for all enabled providers
 func (c *Collector) collectAll(ctx context.Context) error {
 	enabledProviders, err := c.store.ListProviders()
