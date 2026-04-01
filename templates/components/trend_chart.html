@@ -23,6 +23,13 @@
     font-weight: 600;
 }
 
+.trend-chart-controls {
+    display: flex;
+    gap: 1rem;
+    align-items: center;
+    flex-wrap: wrap;
+}
+
 .trend-chart-tabs {
     display: flex;
     background: var(--bg-card);
@@ -52,6 +59,76 @@
     color: white;
 }
 
+/* Mode Toggle (Delta/Cumulative) */
+.trend-mode-toggle {
+    display: flex;
+    background: var(--bg-card);
+    border-radius: var(--radius-md);
+    padding: 4px;
+    border: 1px solid var(--border-color);
+}
+
+.trend-mode-btn {
+    padding: 0.5rem 0.875rem;
+    border-radius: calc(var(--radius-md) - 2px);
+    font-size: 0.75rem;
+    font-weight: 500;
+    cursor: pointer;
+    border: none;
+    background: transparent;
+    color: var(--text-secondary);
+    transition: all 0.2s ease;
+}
+
+.trend-mode-btn:hover {
+    color: var(--text-primary);
+}
+
+.trend-mode-btn.active {
+    background: var(--accent-blue);
+    color: white;
+}
+
+/* Provider Filter Chips */
+.trend-provider-filters {
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+    margin-bottom: 1rem;
+}
+
+.provider-chip {
+    padding: 0.375rem 0.75rem;
+    border-radius: 9999px;
+    font-size: 0.75rem;
+    font-weight: 500;
+    cursor: pointer;
+    border: 1px solid var(--border-color);
+    background: var(--bg-card);
+    color: var(--text-secondary);
+    transition: all 0.2s ease;
+    display: flex;
+    align-items: center;
+    gap: 0.375rem;
+}
+
+.provider-chip:hover {
+    border-color: var(--accent-blue);
+    color: var(--text-primary);
+}
+
+.provider-chip.active {
+    background: var(--accent-blue);
+    border-color: var(--accent-blue);
+    color: white;
+}
+
+.provider-chip .chip-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+}
+
 .trend-chart-canvas-wrapper {
     position: relative;
     height: 400px;
@@ -62,21 +139,58 @@
     color: var(--accent-red);
     padding: 2rem;
 }
+
+.trend-chart-empty {
+    text-align: center;
+    color: var(--text-muted);
+    padding: 3rem;
+}
+
+.trend-chart-empty-icon {
+    font-size: 2.5rem;
+    margin-bottom: 1rem;
+}
+
+.trend-chart-empty-text {
+    font-size: 0.875rem;
+}
+
+/* Chart.js reference line styles */
+.chart-warning-line {
+    borderDash: [5, 5];
+}
+
+.chart-limit-line {
+    borderDash: [];
+}
 </style>
 <div class="trend-chart-container">
     <div class="trend-chart-header">
         <h3 class="trend-chart-title">📈 사용량 추이</h3>
-        <div class="trend-chart-tabs">
-            <button class="trend-chart-tab {{if eq .Range "24h"}}active{{end}}" 
-                    onclick="loadTrendData('24h')" 
-                    data-range="24h">24h</button>
-            <button class="trend-chart-tab {{if eq .Range "7d"}}active{{end}}" 
-                    onclick="loadTrendData('7d')" 
-                    data-range="7d">7d</button>
-            <button class="trend-chart-tab {{if eq .Range "30d"}}active{{end}}" 
-                    onclick="loadTrendData('30d')" 
-                    data-range="30d">30d</button>
+        <div class="trend-chart-controls">
+            <!-- Mode Toggle: Delta / Cumulative -->
+            <div class="trend-mode-toggle">
+                <button class="trend-mode-btn active" data-mode="delta" onclick="setChartMode('delta')">Delta</button>
+                <button class="trend-mode-btn" data-mode="cumulative" onclick="setChartMode('cumulative')">Cumulative</button>
+            </div>
+            <!-- Range Tabs -->
+            <div class="trend-chart-tabs">
+                <button class="trend-chart-tab {{if eq .Range "24h"}}active{{end}}" 
+                        onclick="loadTrendData('24h')" 
+                        data-range="24h">24h</button>
+                <button class="trend-chart-tab {{if eq .Range "7d"}}active{{end}}" 
+                        onclick="loadTrendData('7d')" 
+                        data-range="7d">7d</button>
+                <button class="trend-chart-tab {{if eq .Range "30d"}}active{{end}}" 
+                        onclick="loadTrendData('30d')" 
+                        data-range="30d">30d</button>
+            </div>
         </div>
+    </div>
+    
+    <!-- Provider Filter Chips -->
+    <div id="providerFilters" class="trend-provider-filters">
+        <!-- Dynamically populated -->
     </div>
     
     <div class="trend-chart-canvas-wrapper">
@@ -85,25 +199,157 @@
 </div>
 
 <script>
+// Global state
 let trendChartInstance = null;
+let currentRange = '{{.Range}}';
+let currentMode = 'delta'; // 'delta' or 'cumulative'
+let currentProviderFilter = 'all'; // 'all' or specific provider name
+let trendDataCache = null;
+let providerLimits = {}; // Store limits for reference lines
 
-function getProviderColor(providerId, index) {
+// Provider colors (consistent across charts)
+const PROVIDER_COLORS = {
+    'openai': { bg: 'rgba(16, 185, 129, 0.2)', border: 'rgb(16, 185, 129)' },
+    'anthropic': { bg: 'rgba(168, 85, 247, 0.2)', border: 'rgb(168, 85, 247)' },
+    'google': { bg: 'rgba(59, 130, 246, 0.2)', border: 'rgb(59, 130, 246)' },
+    'default': { bg: 'rgba(100, 116, 139, 0.2)', border: 'rgb(100, 116, 139)' }
+};
+
+function getProviderColor(providerName, index) {
+    const normalizedName = providerName.toLowerCase();
+    if (PROVIDER_COLORS[normalizedName]) {
+        return PROVIDER_COLORS[normalizedName];
+    }
     const hue = (index * 137.5) % 360;
-    return `hsl(${hue}, 70%, 60%)`;
+    return {
+        bg: `hsla(${hue}, 70%, 60%, 0.2)`,
+        border: `hsl(${hue}, 70%, 60%)`
+    };
 }
 
-async function loadTrendData(range = '{{.Range}}') {
+function setChartMode(mode) {
+    currentMode = mode;
+    localStorage.setItem('trendChartMode', mode);
+    
+    // Update button states
+    document.querySelectorAll('.trend-mode-btn').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.mode === mode);
+    });
+    
+    // Re-render with cached data
+    if (trendDataCache) {
+        renderTrendChart(trendDataCache, currentRange);
+    }
+}
+
+function setProviderFilter(provider) {
+    currentProviderFilter = provider;
+    
+    // Update chip states
+    document.querySelectorAll('.provider-chip').forEach(chip => {
+        chip.classList.toggle('active', chip.dataset.provider === provider);
+    });
+    
+    // Re-render with current data
+    if (trendDataCache) {
+        renderTrendChart(trendDataCache, currentRange);
+    }
+}
+
+function calculateDeltaValues(data, providerName) {
+    // Calculate delta (difference between consecutive points)
+    const providerObj = data[providerName];
+    if (!providerObj || !providerObj.trend) return [];
+    
+    const points = providerObj.trend;
+    const deltaPoints = [];
+    
+    for (let i = 0; i < points.length; i++) {
+        const current = points[i];
+        const prevValue = i > 0 ? points[i - 1].value : 0;
+        
+        // Delta calculation with negative guard (reset handling)
+        let delta = current.value - prevValue;
+        if (delta < 0) {
+            // Reset detected - use current value as delta (or 0 if it's a fresh start)
+            delta = i === 0 ? 0 : current.value;
+        }
+        
+        deltaPoints.push({
+            timestamp: current.timestamp,
+            value: Math.max(0, delta),
+            metric: current.metric,
+            status: current.status || 'ok'
+        });
+    }
+    
+    return deltaPoints;
+}
+
+function calculateCumulativeValues(data, providerName) {
+    // Use raw cumulative values
+    const providerObj = data[providerName];
+    if (!providerObj || !providerObj.trend) return [];
+    
+    return providerObj.trend.map(point => ({
+        timestamp: point.timestamp,
+        value: point.value,
+        metric: point.metric,
+        status: point.status || 'ok'
+    }));
+}
+
+function renderProviderFilters(data) {
+    const container = document.getElementById('providerFilters');
+    const providers = Object.keys(data);
+    
+    if (providers.length === 0) {
+        container.innerHTML = '';
+        return;
+    }
+    
+    // Store limits for reference lines
+    providers.forEach(name => {
+        if (data[name].limit) {
+            providerLimits[name] = data[name].limit;
+        }
+    });
+    
+    let html = `<div class="provider-chip active" data-provider="all" onclick="setProviderFilter('all')">
+        <span>전체</span>
+    </div>`;
+    
+    providers.forEach((name, index) => {
+        const color = getProviderColor(name, index);
+        const displayName = data[name].display_name || name;
+        html += `<div class="provider-chip" data-provider="${name}" onclick="setProviderFilter('${name}')">
+            <span class="chip-dot" style="background: ${color.border}"></span>
+            <span>${displayName}</span>
+        </div>`;
+    });
+    
+    container.innerHTML = html;
+}
+
+async function loadTrendData(range = '24h') {
     try {
+        currentRange = range;
         const response = await fetch(`/api/trends?range=${range}`);
         if (!response.ok) throw new Error('데이터 로드 실패');
         
         const data = await response.json();
-        renderTrendChart(data, range);
+        trendDataCache = data;
         
         // Update tab states
         document.querySelectorAll('.trend-chart-tab').forEach(tab => {
             tab.classList.toggle('active', tab.dataset.range === range);
         });
+        
+        // Render provider filters
+        renderProviderFilters(data);
+        
+        // Render chart
+        renderTrendChart(data, range);
     } catch (error) {
         console.error('추이 데이터 로드 오류:', error);
         const container = document.querySelector('.trend-chart-container');
@@ -116,47 +362,86 @@ async function loadTrendData(range = '{{.Range}}') {
     }
 }
 
-// Validate range parameter
-function isValidRange(range) {
-    return ['24h', '7d', '30d'].includes(range);
-}
-
 function renderTrendChart(data, range) {
     const ctx = document.getElementById('trendChart').getContext('2d');
     
-    // /api/trends 응답: {providerName: {provider_id, range, trend: [{timestamp, value, metric}]}}
-    const seriesMap = {};
-    const labels = new Set();
-
-    Object.entries(data).forEach(([providerName, providerObj]) => {
-        (providerObj.trend || []).forEach(point => {
-            labels.add(point.timestamp);
-            const key = providerName + ' ' + point.metric;
-            if (!seriesMap[key]) {
-                seriesMap[key] = { providerName, metric: point.metric, points: [] };
-            }
-            seriesMap[key].points.push(point);
-        });
+    // Filter providers if specific one selected
+    const providers = currentProviderFilter === 'all' 
+        ? Object.keys(data) 
+        : [currentProviderFilter].filter(p => data[p]);
+    
+    if (providers.length === 0) {
+        const canvasWrapper = document.querySelector('.trend-chart-canvas-wrapper');
+        canvasWrapper.innerHTML = `<div class="trend-chart-empty">
+            <div class="trend-chart-empty-icon">📊</div>
+            <div class="trend-chart-empty-text">표시할 데이터가 없습니다</div>
+        </div>`;
+        return;
+    }
+    
+    // Collect all timestamps
+    const allTimestamps = new Set();
+    providers.forEach(providerName => {
+        const providerData = data[providerName];
+        if (!providerData) return;
+        
+        const points = currentMode === 'delta' 
+            ? calculateDeltaValues(data, providerName)
+            : calculateCumulativeValues(data, providerName);
+        
+        points.forEach(p => allTimestamps.add(p.timestamp));
     });
-
-    // Sort labels chronologically
-    const sortedLabels = Array.from(labels).sort((a, b) =>
-        new Date(a) - new Date(b)
-    );
-
-    // Build datasets for each providerName+metric combination
-    const datasets = Object.entries(seriesMap).map(([key, series], index) => {
-        const pointMap = new Map(series.points.map(p => [p.timestamp, p.value]));
-        return {
-            label: key,
-            data: sortedLabels.map(label => pointMap.get(label) ?? null),
-            borderColor: getProviderColor(key, index),
-            backgroundColor: getProviderColor(key, index).replace('60%', '20%'),
+    
+    const sortedLabels = Array.from(allTimestamps).sort((a, b) => new Date(a) - new Date(b));
+    
+    // Build datasets
+    const datasets = [];
+    let maxDataValue = 0;
+    let hasLimit = false;
+    let limitValue = 0;
+    let warningValue = 0;
+    
+    providers.forEach((providerName, index) => {
+        const providerData = data[providerName];
+        if (!providerData) return;
+        
+        const points = currentMode === 'delta'
+            ? calculateDeltaValues(data, providerName)
+            : calculateCumulativeValues(data, providerName);
+        
+        const pointMap = new Map(points.map(p => [p.timestamp, p.value]));
+        const color = getProviderColor(providerName, index);
+        const displayName = providerData.display_name || providerName;
+        
+        const values = sortedLabels.map(label => {
+            const val = pointMap.get(label) ?? null;
+            if (val !== null && val > maxDataValue) maxDataValue = val;
+            return val;
+        });
+        
+        // Determine chart type based on range
+        const chartType = range === '24h' ? 'bar' : 'line';
+        
+        datasets.push({
+            label: displayName,
+            data: values,
+            borderColor: color.border,
+            backgroundColor: chartType === 'bar' ? color.border : color.bg,
+            borderWidth: range === '24h' ? 1 : 2,
             tension: 0.4,
-            fill: false,
-            pointRadius: 3,
-            pointHoverRadius: 5
-        };
+            fill: range === '30d',
+            pointRadius: range === '30d' ? 3 : 0,
+            pointHoverRadius: 5,
+            type: chartType,
+            order: index
+        });
+        
+        // Track limit for reference lines
+        if (providerData.limit && providerData.limit > 0) {
+            hasLimit = true;
+            limitValue = Math.max(limitValue, providerData.limit);
+            warningValue = Math.max(warningValue, providerData.limit * 0.8);
+        }
     });
     
     // Destroy existing chart
@@ -164,20 +449,62 @@ function renderTrendChart(data, range) {
         trendChartInstance.destroy();
     }
     
-    // Create new chart
+    // Calculate Y-axis max
+    let yAxisMax;
+    if (hasLimit) {
+        yAxisMax = Math.max(limitValue * 1.1, maxDataValue * 1.2);
+    } else {
+        yAxisMax = maxDataValue * 1.2 || 100; // Default if no data
+    }
+    
+    // Build Y-axis grid lines for reference
+    const yGridLines = [];
+    if (hasLimit && currentMode === 'cumulative') {
+        // 80% warning line
+        yGridLines.push({
+            y: warningValue,
+            borderColor: 'rgba(234, 179, 8, 0.8)',
+            borderWidth: 2,
+            borderDash: [5, 5],
+            label: {
+                display: true,
+                content: '80% Warning',
+                color: 'rgba(234, 179, 8, 1)',
+                font: { size: 10 }
+            }
+        });
+        // 100% limit line
+        yGridLines.push({
+            y: limitValue,
+            borderColor: 'rgba(239, 68, 68, 0.8)',
+            borderWidth: 2,
+            borderDash: [],
+            label: {
+                display: true,
+                content: '100% Limit',
+                color: 'rgba(239, 68, 68, 1)',
+                font: { size: 10 }
+            }
+        });
+    }
+    
+    // Format labels based on range
+    const formattedLabels = sortedLabels.map(label => {
+        const date = new Date(label);
+        if (range === '24h') {
+            return date.toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' });
+        } else if (range === '7d') {
+            return date.toLocaleDateString('ko-KR', { month: 'short', day: 'numeric' });
+        } else {
+            return date.toLocaleDateString('ko-KR', { month: 'numeric', day: 'numeric' });
+        }
+    });
+    
+    // Create chart
     trendChartInstance = new Chart(ctx, {
-        type: 'line',
+        type: 'bar',
         data: {
-            labels: sortedLabels.map(label => {
-                const date = new Date(label);
-                if (range === '24h') {
-                    return date.toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' });
-                } else if (range === '7d') {
-                    return date.toLocaleDateString('ko-KR', { month: 'short', day: 'numeric' });
-                } else { // 30d
-                    return date.toLocaleDateString('ko-KR', { month: 'numeric', day: 'numeric' });
-                }
-            }),
+            labels: formattedLabels,
             datasets: datasets
         },
         options: {
@@ -189,7 +516,7 @@ function renderTrendChart(data, range) {
             },
             plugins: {
                 legend: {
-                    display: true,
+                    display: providers.length > 1,
                     position: 'top',
                     labels: {
                         color: '#f1f5f9',
@@ -207,16 +534,44 @@ function renderTrendChart(data, range) {
                         label: function(context) {
                             const val = context.parsed.y;
                             if (val == null) return context.dataset.label + ': N/A';
-                            return `${context.dataset.label}: ${val.toFixed(1)}`;
+                            
+                            const prevVal = context.dataset.data[context.dataIndex - 1];
+                            const diff = prevVal != null ? val - prevVal : 0;
+                            const diffStr = diff >= 0 ? `+${diff.toFixed(1)}` : diff.toFixed(1);
+                            
+                            let label = `${context.dataset.label}: ${val.toFixed(1)}`;
+                            if (currentMode === 'delta' && context.dataIndex > 0) {
+                                label += ` (전 대비 ${diffStr})`;
+                            }
+                            
+                            // Add limit percentage for cumulative mode
+                            if (currentMode === 'cumulative' && hasLimit && limitValue > 0) {
+                                const percent = ((val / limitValue) * 100).toFixed(1);
+                                label += ` | ${percent}%`;
+                            }
+                            
+                            return label;
                         }
                     }
-                }
+                },
+                annotation: yGridLines.length > 0 ? {
+                    annotations: yGridLines.reduce((acc, line, i) => {
+                        acc[`line${i}`] = {
+                            type: 'line',
+                            yMin: line.y,
+                            yMax: line.y,
+                            borderColor: line.borderColor,
+                            borderWidth: line.borderWidth,
+                            borderDash: line.borderDash,
+                            label: line.label
+                        };
+                        return acc;
+                    }, {})
+                } : undefined
             },
             scales: {
                 x: {
-                    grid: {
-                        color: '#334155'
-                    },
+                    grid: { color: '#334155' },
                     ticks: {
                         color: '#94a3b8',
                         maxRotation: 45,
@@ -225,16 +580,12 @@ function renderTrendChart(data, range) {
                 },
                 y: {
                     beginAtZero: true,
-                    suggestedMin: 0,
-                    grid: {
-                        color: '#334155'
-                    },
-                    ticks: {
-                        color: '#94a3b8'
-                    },
+                    max: yAxisMax,
+                    grid: { color: '#334155' },
+                    ticks: { color: '#94a3b8' },
                     title: {
                         display: true,
-                        text: '사용량',
+                        text: currentMode === 'delta' ? '소비량 (Delta)' : '누적 사용량',
                         color: '#94a3b8'
                     }
                 }
@@ -245,7 +596,18 @@ function renderTrendChart(data, range) {
 
 // Initialize chart on page load
 document.addEventListener('DOMContentLoaded', function() {
+    // Restore mode from localStorage
+    const savedMode = localStorage.getItem('trendChartMode');
+    if (savedMode) {
+        currentMode = savedMode;
+        document.querySelectorAll('.trend-mode-btn').forEach(btn => {
+            btn.classList.toggle('active', btn.dataset.mode === savedMode);
+        });
+    }
+    
     {{if .TrendData}}
+        trendDataCache = {{.TrendData}};
+        renderProviderFilters({{.TrendData}});
         renderTrendChart({{.TrendData}}, '{{.Range}}');
     {{else}}
         loadTrendData('{{.Range}}');
