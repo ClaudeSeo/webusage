@@ -53,7 +53,7 @@
     display: flex;
     justify-content: space-between;
     margin-top: 0.25rem;
-    font-size: 0.7rem;
+    font-size: 0.75rem;
     color: var(--text-muted);
 }
 
@@ -61,7 +61,7 @@
     color: var(--text-muted);
 }
 
-/* Progress bar - fully rounded */
+/* Progress bar - fully rounded with smooth animation */
 .progress-bar-wrapper {
     margin-top: 0.75rem;
     background: var(--bg-card);
@@ -73,24 +73,35 @@
 .progress-bar-inner {
     height: 100%;
     border-radius: var(--radius-full);
-    transition: width 0.8s cubic-bezier(0.4, 0, 0.2, 1);
+    transition: width 0.5s ease-out, background 0.3s ease;
 }
 
-.progress-bar-inner.low {
+.progress-bar-inner.safe {
     background: linear-gradient(90deg, var(--accent-green), var(--accent-green-hover));
 }
 
-.progress-bar-inner.medium {
+.progress-bar-inner.warning {
     background: linear-gradient(90deg, var(--accent-yellow), var(--accent-yellow-hover));
 }
 
-.progress-bar-inner.high {
+.progress-bar-inner.danger {
     background: linear-gradient(90deg, var(--accent-red), var(--accent-red-hover));
+}
+
+.metric-label-text {
+    font-size: 0.875rem;
+    color: var(--text-secondary);
+}
+
+.metric-value-text {
+    font-weight: 600;
+    color: var(--text-primary);
+    font-size: 0.875rem;
 }
 </style>
 <div class="card provider-card-inner" data-provider-id="{{.ID}}" data-metrics='{{range $i, $m := .Metrics}}{{if $i}},{{end}}{"label":"{{$m.Label}}","used":{{$m.Used}},"limit":{{$m.Limit}}}{{end}}'>
     <div class="card-header">
-        <h3 class="card-title">{{.Name}}</h3>
+        <h3 class="card-title" style="font-size: 1.125rem; font-weight: 600;">{{.Name}}</h3>
         {{if .LastError}}
             <span class="card-status status-error">🔴 에러</span>
         {{else if isStale .CollectedAt}}
@@ -105,12 +116,12 @@
             {{range .Metrics}}
             <div class="metric-section" data-used="{{.Used}}" data-limit="{{.Limit}}" data-label="{{.Label}}">
                 <div class="metric-row">
-                    <span class="metric-label">{{.Label}}</span>
-                    <span class="metric-value metric-display">-</span>
+                    <span class="metric-label-text">{{.Label}}</span>
+                    <span class="metric-value-text metric-display">-</span>
                 </div>
 
                 <div class="progress-bar-wrapper">
-                    <div class="progress-bar-inner metric-progress"
+                    <div class="progress-bar-inner metric-progress safe"
                          style="width: 0%"></div>
                 </div>
 
@@ -130,8 +141,8 @@
     </div>
 
     <div class="metric-row" style="margin-top: 0.5rem;">
-        <span class="metric-label">마지막 수집</span>
-        <span class="metric-value">{{formatDateTime .CollectedAt}}</span>
+        <span class="metric-label-text">마지막 수집</span>
+        <span class="metric-value-text">{{formatDateTime .CollectedAt}}</span>
     </div>
 
     {{if .LastError}}
@@ -156,7 +167,6 @@
 
 <script>
 (function() {
-    // Initialize metric display based on gauge mode
     function updateMetricDisplay() {
         const mode = localStorage.getItem('gaugeMode') || 'left';
         const card = document.querySelector('[data-provider-id="{{.ID}}"]');
@@ -166,48 +176,59 @@
         metrics.forEach(metric => {
             const used = parseFloat(metric.dataset.used);
             const limit = parseFloat(metric.dataset.limit);
-            const percent = limit > 0 ? (used / limit) * 100 : 0;
             
-            // Update display value
             const display = metric.querySelector('.metric-display');
             const percentEl = metric.querySelector('.metric-percent');
             const progress = metric.querySelector('.metric-progress');
             
+            let displayValue, percentValue, progressWidth, colorClass;
+            
             if (mode === 'left') {
-                // Show remaining (left)
                 const remaining = Math.max(0, limit - used);
                 const remainingPercent = limit > 0 ? (remaining / limit) * 100 : 0;
-                display.textContent = remaining.toFixed(1) + ' / ' + new Intl.NumberFormat('ko-KR').format(limit);
-                percentEl.textContent = remainingPercent.toFixed(1) + '% 남음';
-                progress.style.width = remainingPercent + '%';
+                displayValue = remaining.toFixed(1) + ' / ' + new Intl.NumberFormat('ko-KR').format(limit);
+                percentValue = remainingPercent.toFixed(1) + '% 남음';
+                progressWidth = remainingPercent;
+                
+                // Color based on remaining (low remaining = danger)
+                if (remainingPercent < 20) {
+                    colorClass = 'danger';
+                } else if (remainingPercent < 50) {
+                    colorClass = 'warning';
+                } else {
+                    colorClass = 'safe';
+                }
             } else {
-                // Show usage
-                display.textContent = used.toFixed(1) + ' / ' + new Intl.NumberFormat('ko-KR').format(limit);
-                percentEl.textContent = percent.toFixed(1) + '% 사용';
-                progress.style.width = percent + '%';
+                const usagePercent = limit > 0 ? (used / limit) * 100 : 0;
+                displayValue = used.toFixed(1) + ' / ' + new Intl.NumberFormat('ko-KR').format(limit);
+                percentValue = usagePercent.toFixed(1) + '% 사용';
+                progressWidth = usagePercent;
+                
+                // Color based on usage (high usage = danger)
+                if (usagePercent >= 80) {
+                    colorClass = 'danger';
+                } else if (usagePercent >= 50) {
+                    colorClass = 'warning';
+                } else {
+                    colorClass = 'safe';
+                }
             }
             
-            // Update progress bar color class
-            const effectivePercent = mode === 'left' ? (limit > 0 ? (limit - used) / limit * 100 : 0) : percent;
-            progress.classList.remove('low', 'medium', 'high');
-            if (effectivePercent < 20) {
-                progress.classList.add('high');
-            } else if (effectivePercent < 50) {
-                progress.classList.add('medium');
-            } else {
-                progress.classList.add('low');
-            }
+            display.textContent = displayValue;
+            percentEl.textContent = percentValue;
+            
+            progress.classList.remove('safe', 'warning', 'danger');
+            progress.classList.add(colorClass);
+            progress.style.width = progressWidth + '%';
         });
     }
     
-    // Initial update
     if (document.readyState === 'loading') {
         document.addEventListener('DOMContentLoaded', updateMetricDisplay);
     } else {
         updateMetricDisplay();
     }
     
-    // Listen for gauge mode changes
     window.addEventListener('gaugeModeChanged', updateMetricDisplay);
 })();
 </script>
