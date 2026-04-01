@@ -70,7 +70,19 @@ type windowData struct {
 }
 
 type creditsBlock struct {
-	Balance float64 `json:"balance"`
+	Balance json.Number `json:"balance"`
+}
+
+// balanceFloat는 creditsBlock.Balance를 float64로 변환합니다 (string/number 모두 처리)
+func (c *creditsBlock) balanceFloat() float64 {
+	if c == nil {
+		return 0
+	}
+	f, err := c.Balance.Float64()
+	if err != nil {
+		return 0
+	}
+	return f
 }
 
 // CodexProvider는 OpenAI Codex CLI OAuth 기반 usage provider
@@ -322,7 +334,7 @@ func (p *CodexProvider) FetchUsage(ctx context.Context) ([]provider.UsagePoint, 
 		})
 	} else if body.Credits != nil {
 		limit := creditsMax
-		used := creditsMax - body.Credits.Balance
+		used := creditsMax - body.Credits.balanceFloat()
 		points = append(points, provider.UsagePoint{
 			Metric:      "credits",
 			Used:        used,

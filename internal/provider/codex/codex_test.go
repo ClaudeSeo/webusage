@@ -86,7 +86,7 @@ func TestCodexProvider_FetchUsage_HeaderBased(t *testing.T) {
 			PrimaryWindow:   &windowData{UsedPercent: 10},
 			SecondaryWindow: &windowData{UsedPercent: 20},
 		},
-		Credits: &creditsBlock{Balance: 500},
+		Credits: &creditsBlock{Balance: json.Number("500")},
 	}
 	bodyBytes, _ := json.Marshal(bodyData)
 
@@ -214,7 +214,7 @@ func TestCodexProvider_FetchUsage_BodyFallback(t *testing.T) {
 // TestCodexProvider_FetchUsage_WithCredits는 body credits 데이터를 반환하는지 검증합니다
 func TestCodexProvider_FetchUsage_WithCredits(t *testing.T) {
 	bodyData := usageResponseBody{
-		Credits: &creditsBlock{Balance: 200},
+		Credits: &creditsBlock{Balance: json.Number("200")},
 	}
 	bodyBytes, _ := json.Marshal(bodyData)
 
