@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/ClaudeSeo/webusage/internal/domain"
-	"github.com/ClaudeSeo/webusage/internal/provider"
 	"github.com/ClaudeSeo/webusage/internal/store"
 )
 
@@ -90,7 +89,7 @@ func aggregateByHour(data []domain.TrendDataPoint) []domain.TrendDataPoint {
 	bucketMap := make(map[time.Time]float64)
 
 	for _, dp := range data {
-		hour := dp.Timestamp.Truncate(time.Hour)
+		hour := time.Date(dp.Timestamp.Year(), dp.Timestamp.Month(), dp.Timestamp.Day(), dp.Timestamp.Hour(), 0, 0, 0, dp.Timestamp.Location())
 		bucketMap[hour] = dp.Value // Take latest value for the hour
 	}
 
@@ -163,37 +162,37 @@ func (s *Server) handleAPICurrent(w nethttp.ResponseWriter, r *nethttp.Request) 
 	}
 
 	now := time.Now()
-	result := make(map[string]*domain.CurrentCycleInfo)
+	result := make(map[string]interface{})
 
 	for _, p := range providers {
-		cycleConfig := domain.GetProviderCycleConfig(p.Name)
-
-		info := &domain.CurrentCycleInfo{
-			ProviderID:   p.Name,
-			DisplayName:  getDisplayName(p.Name, s.registry),
-			Enabled:      p.Enabled,
-			CycleType:    string(cycleConfig.CycleType),
-			LimitType:    string(cycleConfig.LimitType),
-			LimitValue:   cycleConfig.LimitValue,
-			LastUpdated:  p.LastRun,
-			Error:        p.LastError,
-		}
-
-		// Get latest usage data
-		snapshots, err := s.store.GetLatestUsageByProvider(p.ID)
-		if err != nil || len(snapshots) == 0 {
-			result[p.Name] = info
+		if !p.Enabled {
 			continue
 		}
 
-		// Find the primary metric (session for rolling_5h, credits for monthly)
+		cycleConfig := getProviderCycleConfig(p.Name)
+
+		// Get latest snapshots for this provider
+		snapshots, err := s.store.GetLatestUsageByProvider(p.ID)
+		if err != nil {
+			s.logger.Warn("Failed to get latest snapshots", "provider", p.Name, "error", err)
+			continue
+		}
+
+		// Determine primary metric based on cycle type
+		var primaryMetric string
+		switch cycleConfig.CycleType {
+		case domain.CycleTypeRolling5h:
+			primaryMetric = "session"
+		case domain.CycleTypeMonthly:
+			primaryMetric = "premium_interactions"
+		default:
+			primaryMetric = ""
+		}
+
+		// Find primary metric snapshot
 		var primarySnapshot *store.UsageSnapshot
 		for _, snap := range snapshots {
-			if cycleConfig.CycleType == domain.CycleTypeRolling5h && snap.Metric == "session" {
-				primarySnapshot = snap
-				break
-			}
-			if cycleConfig.CycleType == domain.CycleTypeMonthly && (snap.Metric == "premium_interactions" || snap.Metric == "chat") {
+			if snap.Metric == primaryMetric {
 				primarySnapshot = snap
 				break
 			}
@@ -203,28 +202,42 @@ func (s *Server) handleAPICurrent(w nethttp.ResponseWriter, r *nethttp.Request) 
 			primarySnapshot = snapshots[0]
 		}
 
+		info := map[string]interface{}{
+			"provider_id":              p.Name,
+			"display_name":             getDisplayName(p.Name),
+			"enabled":                  p.Enabled,
+			"cycle_type":               string(cycleConfig.CycleType),
+			"limit_type":               string(cycleConfig.LimitType),
+			"current_usage":            0.0,
+			"usage_percent":            0.0,
+			"will_exceed_before_reset": false,
+			"current_pace":             0.0,
+			"baseline_pace":             0.0,
+			"pace_vs_baseline_ratio":   0.0,
+		}
+
 		if primarySnapshot != nil {
-			info.CurrentUsage = primarySnapshot.Used
+			info["current_usage"] = primarySnapshot.Used
 			if primarySnapshot.Limit != nil && *primarySnapshot.Limit > 0 {
-				info.UsagePercent = (primarySnapshot.Used / *primarySnapshot.Limit) * 100
-				info.LimitValue = primarySnapshot.Limit
+				info["usage_percent"] = (primarySnapshot.Used / *primarySnapshot.Limit) * 100
+				info["limit_value"] = *primarySnapshot.Limit
 			}
 
 			// Calculate cycle boundaries
-			info.CycleStart, info.CycleEnd = domain.CalculateCycleBoundaries(
+			info["cycle_start"], info["cycle_end"] = calculateCycleBoundaries(
 				cycleConfig.CycleType,
 				now,
 				primarySnapshot.ResetAt,
 			)
 
 			// Calculate time remaining
-			if info.CycleEnd != nil {
-				info.TimeRemaining = domain.FormatDuration(info.CycleEnd.Sub(now))
+			if cycleEnd, ok := info["cycle_end"].(*time.Time); ok && cycleEnd != nil {
+				info["time_remaining"] = formatDuration(cycleEnd.Sub(now))
 			}
 
 			// Get trend data for pace calculation
-			if info.CycleStart != nil {
-				startTime := *info.CycleStart
+			if cycleStart, ok := info["cycle_start"].(*time.Time); ok && cycleStart != nil {
+				startTime := *cycleStart
 				if startTime.Before(now.Add(-30 * 24 * time.Hour)) {
 					startTime = now.Add(-30 * 24 * time.Hour)
 				}
@@ -238,19 +251,24 @@ func (s *Server) handleAPICurrent(w nethttp.ResponseWriter, r *nethttp.Request) 
 							Metric:    td.Metric,
 						}
 					}
-					info.CurrentPace, info.BaselinePace, info.PaceVsBaselineRatio = domain.CalculatePace(points)
+					info["current_pace"], info["baseline_pace"], info["pace_vs_baseline_ratio"] = calculatePace(points)
 				}
 			}
 
 			// Forecast limit exceedance
-			if info.CurrentPace > 0 && info.CycleEnd != nil {
-				info.ForecastLimitAt, info.WillExceedBeforeReset = domain.ForecastLimitExceedTime(
-					info.CurrentUsage,
-					info.LimitValue,
-					info.CurrentPace,
-					info.CycleEnd,
+			currentPace, _ := info["current_pace"].(float64)
+			limitValue, _ := info["limit_value"].(*float64)
+			cycleEnd, _ := info["cycle_end"].(*time.Time)
+			if currentPace > 0 && limitValue != nil && cycleEnd != nil {
+				info["forecast_limit_at"], info["will_exceed_before_reset"] = forecastLimitExceedTime(
+					primarySnapshot.Used,
+					limitValue,
+					currentPace,
+					cycleEnd,
 				)
 			}
+
+			info["last_updated"] = primarySnapshot.CollectedAt.Format(time.RFC3339)
 		}
 
 		result[p.Name] = info
@@ -267,7 +285,6 @@ func (s *Server) handleAPITrends(w nethttp.ResponseWriter, r *nethttp.Request) {
 		return
 	}
 
-	// Parse query parameters
 	providerID := r.URL.Query().Get("provider_id")
 	view := r.URL.Query().Get("view")
 	if view == "" {
@@ -294,23 +311,12 @@ func (s *Server) handleAPITrends(w nethttp.ResponseWriter, r *nethttp.Request) {
 		return
 	}
 
-	cycleConfig := domain.GetProviderCycleConfig(p.Name)
+	cycleConfig := getProviderCycleConfig(p.Name)
 	now := time.Now()
-
-	// Determine primary metric based on cycle type
-	var primaryMetric string
-	switch cycleConfig.CycleType {
-	case domain.CycleTypeRolling5h:
-		primaryMetric = "session"
-	case domain.CycleTypeMonthly:
-		primaryMetric = "premium_interactions"
-	default:
-		primaryMetric = ""
-	}
 
 	// Calculate time range based on view
 	var startTime, endTime time.Time
-	cycleStart, cycleEnd := domain.CalculateCycleBoundaries(cycleConfig.CycleType, now, nil)
+	cycleStart, cycleEnd := calculateCycleBoundaries(cycleConfig.CycleType, now, nil)
 
 	switch view {
 	case "current":
@@ -340,6 +346,17 @@ func (s *Server) handleAPITrends(w nethttp.ResponseWriter, r *nethttp.Request) {
 	default:
 		startTime = now.Add(-24 * time.Hour)
 		endTime = now
+	}
+
+	// Determine primary metric based on cycle type
+	var primaryMetric string
+	switch cycleConfig.CycleType {
+	case domain.CycleTypeRolling5h:
+		primaryMetric = "session"
+	case domain.CycleTypeMonthly:
+		primaryMetric = "premium_interactions"
+	default:
+		primaryMetric = ""
 	}
 
 	// Get trend data
@@ -377,14 +394,19 @@ func (s *Server) handleAPITrends(w nethttp.ResponseWriter, r *nethttp.Request) {
 	points = aggregateDataByBucket(points, bucketSize)
 
 	result := domain.ProviderTrends{
-		ProviderID: p.Name,
+		ProviderID: providerID,
 		CycleType:  string(cycleConfig.CycleType),
 		View:       view,
 		Mode:       mode,
 		Bucket:     bucketSize,
 		Data:       points,
-		CycleStart: cycleStart,
-		CycleEnd:   cycleEnd,
+	}
+
+	if cycleStart != nil {
+		result.CycleStart = cycleStart
+	}
+	if cycleEnd != nil {
+		result.CycleEnd = cycleEnd
 	}
 
 	s.jsonResponse(w, result)
@@ -407,37 +429,39 @@ func (s *Server) handleAPIForecast(w nethttp.ResponseWriter, r *nethttp.Request)
 	}
 
 	now := time.Now()
-	var result []domain.ForecastInfo
+	result := make(map[string]interface{})
 
 	for _, p := range providers {
+		if !p.Enabled {
+			continue
+		}
+
 		// Filter by provider_id if specified
 		if providerID != "" && p.Name != providerID {
 			continue
 		}
 
-		cycleConfig := domain.GetProviderCycleConfig(p.Name)
-
-		info := domain.ForecastInfo{
-			ProviderID:   p.Name,
-			DisplayName:  getDisplayName(p.Name, s.registry),
-			CycleType:    string(cycleConfig.CycleType),
-		}
-
-		// Get latest usage data
+		cycleConfig := getProviderCycleConfig(p.Name)
 		snapshots, err := s.store.GetLatestUsageByProvider(p.ID)
-		if err != nil || len(snapshots) == 0 {
-			result = append(result, info)
+		if err != nil {
 			continue
 		}
 
-		// Find primary metric
+		// Determine primary metric based on cycle type
+		var primaryMetric string
+		switch cycleConfig.CycleType {
+		case domain.CycleTypeRolling5h:
+			primaryMetric = "session"
+		case domain.CycleTypeMonthly:
+			primaryMetric = "premium_interactions"
+		default:
+			primaryMetric = ""
+		}
+
+		// Find primary snapshot
 		var primarySnapshot *store.UsageSnapshot
 		for _, snap := range snapshots {
-			if cycleConfig.CycleType == domain.CycleTypeRolling5h && snap.Metric == "session" {
-				primarySnapshot = snap
-				break
-			}
-			if cycleConfig.CycleType == domain.CycleTypeMonthly && (snap.Metric == "premium_interactions" || snap.Metric == "chat") {
+			if snap.Metric == primaryMetric {
 				primarySnapshot = snap
 				break
 			}
@@ -446,22 +470,32 @@ func (s *Server) handleAPIForecast(w nethttp.ResponseWriter, r *nethttp.Request)
 			primarySnapshot = snapshots[0]
 		}
 
-		if primarySnapshot != nil {
-			info.CurrentUsage = primarySnapshot.Used
-			if primarySnapshot.Limit != nil {
-				info.LimitValue = primarySnapshot.Limit
-				info.Remaining = *primarySnapshot.Limit - primarySnapshot.Used
-			}
+		if primarySnapshot == nil {
+			continue
+		}
 
-			// Calculate cycle boundaries
-			_, cycleEnd := domain.CalculateCycleBoundaries(cycleConfig.CycleType, now, primarySnapshot.ResetAt)
-			info.CycleEnd = cycleEnd
+		// Calculate forecast
+		cycleStart, cycleEnd := calculateCycleBoundaries(cycleConfig.CycleType, now, primarySnapshot.ResetAt)
+		if cycleEnd == nil {
+			continue
+		}
 
-			// Get trend data for forecasting
-			if cycleEnd != nil {
-				startTime := cycleEnd.Add(-30 * 24 * time.Hour)
-				trendData, _ := s.store.GetUsageTrends(p.ID, primarySnapshot.Metric, startTime, now)
-				if len(trendData) > 0 {
+		forecast := map[string]interface{}{
+			"provider_id":   p.Name,
+			"cycle_type":    string(cycleConfig.CycleType),
+			"current_usage": primarySnapshot.Used,
+			"cycle_end":     cycleEnd,
+			"time_remaining": formatDuration(cycleEnd.Sub(now)),
+			"confidence":    0.8, // Default confidence
+		}
+
+		if primarySnapshot.Limit != nil && *primarySnapshot.Limit > 0 {
+			forecast["limit"] = *primarySnapshot.Limit
+
+			// Calculate pace from trend data
+			if cycleStart != nil {
+				trendData, _ := s.store.GetUsageTrends(p.ID, primarySnapshot.Metric, *cycleStart, now)
+				if len(trendData) > 1 {
 					points := make([]domain.TrendDataPoint, len(trendData))
 					for i, td := range trendData {
 						points[i] = domain.TrendDataPoint{
@@ -470,56 +504,45 @@ func (s *Server) handleAPIForecast(w nethttp.ResponseWriter, r *nethttp.Request)
 							Metric:    td.Metric,
 						}
 					}
-					currentPace, _, _ := domain.CalculatePace(points)
+					currentPace, baselinePace, _ := calculatePace(points)
+					forecast["current_pace"] = currentPace
+					forecast["baseline_pace"] = baselinePace
 
-					// Calculate forecast
-					info.ForecastLimitAt, info.WillExceedBeforeReset = domain.ForecastLimitExceedTime(
-						info.CurrentUsage,
-						info.LimitValue,
+					// Forecast exceed time
+					forecastAt, willExceed := forecastLimitExceedTime(
+						primarySnapshot.Used,
+						primarySnapshot.Limit,
 						currentPace,
-						info.CycleEnd,
+						cycleEnd,
 					)
-
-					// Calculate hours until limit
-					if info.ForecastLimitAt != nil {
-						hours := info.ForecastLimitAt.Sub(now).Hours()
-						if hours > 0 {
-							info.HoursUntilLimit = &hours
-						}
-					}
-
-					// Confidence calculation (based on data points count)
-					if len(points) >= 10 {
-						info.Confidence = 0.9
-					} else if len(points) >= 5 {
-						info.Confidence = 0.7
-					} else {
-						info.Confidence = 0.5
+					forecast["will_exceed_before_reset"] = willExceed
+					if forecastAt != nil {
+						forecast["forecast_limit_at"] = forecastAt
 					}
 				}
 			}
-
-			// Determine recommended action
-			if info.WillExceedBeforeReset {
-				info.RecommendedAction = "reduce_usage"
-			} else if info.LimitValue != nil && info.Remaining < (*info.LimitValue * 0.2) {
-				info.RecommendedAction = "monitor_closely"
-			} else {
-				info.RecommendedAction = "normal"
-			}
 		}
 
-		result = append(result, info)
+		result[p.Name] = forecast
+	}
+
+	// Wrap forecasts in "forecasts" key for API contract compatibility
+	var forecasts []map[string]interface{}
+	for _, f := range result {
+		if m, ok := f.(map[string]interface{}); ok {
+			forecasts = append(forecasts, m)
+		}
 	}
 
 	// Return single object if provider_id specified, else array
-	if providerID != "" && len(result) == 1 {
-		s.jsonResponse(w, result[0])
-	} else {
-		s.jsonResponse(w, map[string]interface{}{
-			"forecasts": result,
-		})
+	if providerID != "" && len(forecasts) == 1 {
+		s.jsonResponse(w, forecasts[0])
+		return
 	}
+
+	s.jsonResponse(w, map[string]interface{}{
+		"forecasts": forecasts,
+	})
 }
 
 // handleAPIProvidersMeta returns provider metadata with cycle information
@@ -536,29 +559,33 @@ func (s *Server) handleAPIProvidersMeta(w nethttp.ResponseWriter, r *nethttp.Req
 		return
 	}
 
-	var result []domain.ProviderMetadata
+	type ProviderMeta struct {
+		ProviderID      string   `json:"provider_id"`
+		DisplayName     string   `json:"display_name"`
+		AuthMethod      string   `json:"auth_method"`
+		Enabled         bool     `json:"enabled"`
+		CycleType       string   `json:"cycle_type"`
+		LimitType       string   `json:"limit_type"`
+		Metrics         []string `json:"metrics"`
+		SupportedViews  []string `json:"supported_views"`
+		SupportedModes  []string `json:"supported_modes"`
+		SupportedBuckets []string `json:"supported_buckets"`
+	}
+
+	var result []ProviderMeta
 
 	for _, p := range providers {
-		cycleConfig := domain.GetProviderCycleConfig(p.Name)
+		cycleConfig := getProviderCycleConfig(p.Name)
 
-		meta := domain.ProviderMetadata{
-			ProviderID:      p.Name,
-			DisplayName:     getDisplayName(p.Name, s.registry),
-			AuthMethod:      "unknown",
-			Enabled:         p.Enabled,
-			CycleType:       string(cycleConfig.CycleType),
-			LimitType:       string(cycleConfig.LimitType),
-			LimitValue:      cycleConfig.LimitValue,
-			SupportedViews:  []string{"current", "previous", "both"},
-			SupportedModes:  []string{"absolute", "relative", "rate"},
+		meta := ProviderMeta{
+			ProviderID:  p.Name,
+			DisplayName: getDisplayName(p.Name),
+			Enabled:     p.Enabled,
+			CycleType:   string(cycleConfig.CycleType),
+			LimitType:   string(cycleConfig.LimitType),
+			SupportedViews: []string{"current", "previous", "both"},
+			SupportedModes: []string{"absolute", "relative", "rate"},
 			SupportedBuckets: []string{"auto", "hour", "day", "cycle"},
-		}
-
-		// Get auth method from registry
-		if s.registry != nil {
-			if rp, ok := s.registry.Get(p.Name); ok {
-				meta.AuthMethod = string(rp.AuthMethod())
-			}
 		}
 
 		// Get available metrics
@@ -576,14 +603,7 @@ func (s *Server) handleAPIProvidersMeta(w nethttp.ResponseWriter, r *nethttp.Req
 }
 
 // getDisplayName returns the display name for a provider
-func getDisplayName(name string, registry *provider.Registry) string {
-	if registry != nil {
-		if p, ok := registry.Get(name); ok {
-			return p.DisplayName()
-		}
-	}
-
-	// Fallback display names
+func getDisplayName(name string) string {
 	displayNames := map[string]string{
 		"claude":  "Claude",
 		"codex":   "Codex",

@@ -19,8 +19,8 @@ type Config struct {
 	// CollectionInterval은 usage 데이터 수집 주기
 	CollectionInterval time.Duration
 
-	// Provider credential 경로 설정 (기본값은 각 앱의 표준 위치)
-	ClaudeCredPath string // ~/.claude/.credentials.json 기본값
+	// OpenUsageURL은 OpenUsage API endpoint
+	OpenUsageURL string
 }
 
 // LoadConfig는 .env 파일과 환경변수에서 설정을 로드합니다
@@ -37,7 +37,7 @@ func LoadConfig() (*Config, error) {
 		ServerHost:         getEnv("SERVER_HOST", "127.0.0.1"),
 		ServerPort:         getIntEnv("SERVER_PORT", 8080),
 		CollectionInterval: time.Duration(interval) * time.Second,
-		ClaudeCredPath: getEnv("CLAUDE_CRED_PATH", "~/.claude/.credentials.json"),
+		OpenUsageURL:       getEnv("OPENUSAGE_URL", "http://127.0.0.1:6736"),
 	}, nil
 }
 

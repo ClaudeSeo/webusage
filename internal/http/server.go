@@ -14,15 +14,15 @@ import (
 
 	"github.com/ClaudeSeo/webusage/internal/collector"
 	"github.com/ClaudeSeo/webusage/internal/domain"
-	"github.com/ClaudeSeo/webusage/internal/provider"
+	"github.com/ClaudeSeo/webusage/internal/openusage"
 	"github.com/ClaudeSeo/webusage/internal/store"
 )
 
 // Server manages the HTTP server
 type Server struct {
 	store       *store.Store
-	registry    *provider.Registry
 	collector   *collector.Collector
+	openusage   *openusage.Client
 	host        string
 	port        int
 	logger      *slog.Logger
@@ -40,7 +40,6 @@ func NewServer(s *store.Store, host string, port int, logger *slog.Logger, templ
 
 	server := &Server{
 		store:       s,
-		registry:    nil, // SetRegistry로 주입
 		host:        host,
 		port:        port,
 		logger:      logger,
@@ -54,6 +53,16 @@ func NewServer(s *store.Store, host string, port int, logger *slog.Logger, templ
 
 	server.setupRoutes()
 	return server, nil
+}
+
+// SetCollector sets the collector instance
+func (s *Server) SetCollector(c *collector.Collector) {
+	s.collector = c
+}
+
+// SetOpenUsageClient sets the OpenUsage client
+func (s *Server) SetOpenUsageClient(client *openusage.Client) {
+	s.openusage = client
 }
 
 // loadTemplates loads HTML templates from the templates/ directory
@@ -183,8 +192,8 @@ func (s *Server) handleDashboard(w nethttp.ResponseWriter, r *nethttp.Request) {
 	}
 
 	type MetricView struct {
-		Name    string    // 메트릭 키 (session, weekly, credits 등)
-		Label   string    // 표시 레이블 (세션 (5h), 주간 (7d) 등)
+		Name    string
+		Label   string
 		Used    float64
 		Limit   float64
 		Percent float64
@@ -220,7 +229,6 @@ func (s *Server) handleDashboard(w nethttp.ResponseWriter, r *nethttp.Request) {
 			LastError: p.LastError,
 		}
 
-		// Cycle-Aware API 정보와 병합
 		cycleConfig := getProviderCycleConfig(p.Name)
 		view.CycleType = string(cycleConfig.CycleType)
 		view.LimitType = string(cycleConfig.LimitType)
@@ -229,7 +237,6 @@ func (s *Server) handleDashboard(w nethttp.ResponseWriter, r *nethttp.Request) {
 		if err == nil && len(snapshots) > 0 {
 			now := time.Now()
 
-			// 기본 스냅샷 (첫 번째 메트릭 기준)
 			primarySnapshot := snapshots[0]
 			for _, snap := range snapshots {
 				if cycleConfig.CycleType == domain.CycleTypeRolling5h && snap.Metric == "session" {
@@ -241,7 +248,7 @@ func (s *Server) handleDashboard(w nethttp.ResponseWriter, r *nethttp.Request) {
 					break
 				}
 			}
-			
+
 			cycleStart, cycleEnd := calculateCycleBoundaries(cycleConfig.CycleType, now, primarySnapshot.ResetAt)
 			if cycleStart != nil {
 				view.CycleStartAt = *cycleStart
@@ -250,12 +257,11 @@ func (s *Server) handleDashboard(w nethttp.ResponseWriter, r *nethttp.Request) {
 				view.CycleEndAt = *cycleEnd
 				view.TimeRemaining = formatDuration(cycleEnd.Sub(now))
 			}
-			
-			// 메트릭 처리
+
 			for _, snap := range snapshots {
 				mv := MetricView{
 					Name:  snap.Metric,
-					Label: metricLabel(snap.Metric),
+					Label: domain.MetricLabel(snap.Metric),
 					Used:  snap.Used,
 				}
 				if snap.Limit != nil {
@@ -291,20 +297,8 @@ func (s *Server) handleDashboard(w nethttp.ResponseWriter, r *nethttp.Request) {
 	}
 }
 
-// SetRegistry는 provider Registry를 주입합니다
-func (s *Server) SetRegistry(r *provider.Registry) {
-	s.registry = r
-}
-
-// SetCollector는 Collector를 주입합니다 (즉시 수집, 새로고침 기능)
-func (s *Server) SetCollector(c *collector.Collector) {
-	s.collector = c
-}
-
 // handleProviderAction handles /api/providers/{name}/enable and /api/providers/{name}/disable
 func (s *Server) handleProviderAction(w nethttp.ResponseWriter, r *nethttp.Request) {
-	// URL: /api/providers/{name}/enable 또는 /api/providers/{name}/disable
-	// path prefix "/api/providers/" 이후 파싱
 	path := strings.TrimPrefix(r.URL.Path, "/api/providers/")
 	parts := strings.Split(path, "/")
 	if len(parts) != 2 {
@@ -333,58 +327,25 @@ func (s *Server) handleProviderAction(w nethttp.ResponseWriter, r *nethttp.Reque
 	}
 }
 
-// handleEnableProvider activates a provider after credential discovery
+// handleEnableProvider activates a provider
 func (s *Server) handleEnableProvider(w nethttp.ResponseWriter, r *nethttp.Request, name string) {
-	if s.registry == nil {
-		s.jsonError(w, "Registry not available", nethttp.StatusInternalServerError)
-		return
-	}
-
-	p, ok := s.registry.Get(name)
-	if !ok {
-		s.jsonError(w, fmt.Sprintf("Provider %q not found. Available providers: claude, codex, copilot", name), nethttp.StatusBadRequest)
-		return
-	}
-
-	found, err := p.DiscoverCredentials(r.Context())
-	if err != nil {
-		s.jsonError(w, fmt.Sprintf("Credential discovery failed for %q: %v", name, err), nethttp.StatusBadRequest)
-		return
-	}
-	if !found {
-		s.jsonError(w, fmt.Sprintf("No credentials found for %q. Please log in to the provider first.", name), nethttp.StatusBadRequest)
-		return
-	}
-
 	if err := s.store.EnableProviderByName(name, true); err != nil {
-		s.jsonError(w, fmt.Sprintf("Failed to enable provider %q in database: %v", name, err), nethttp.StatusInternalServerError)
+		s.jsonError(w, fmt.Sprintf("Failed to enable provider %q: %v", name, err), nethttp.StatusInternalServerError)
 		return
 	}
 
-	if err := s.registry.SetEnabled(name, true); err != nil {
-		s.logger.Warn("Failed to set registry enabled state", "provider", name, "error", err)
-	}
-
-	// 활성화 직후 즉시 수집 트리거
+	// Trigger immediate collection
 	if s.collector != nil {
 		go func() {
-			if err := s.collector.CollectSingle(context.Background(), name); err != nil {
-				s.logger.Warn("Immediate collection after enable failed", "provider", name, "error", err)
+			if err := s.collector.CollectAll(r.Context()); err != nil {
+				s.logger.Error("Immediate collection after enable failed", "provider", name, "error", err)
 			}
 		}()
 	}
 
-	dbProvider, err := s.store.GetProviderByName(name)
-	if err != nil {
-		s.jsonError(w, "Provider enabled but failed to fetch updated state", nethttp.StatusInternalServerError)
-		return
-	}
-
 	s.jsonResponse(w, map[string]interface{}{
-		"provider":     dbProvider,
-		"display_name": p.DisplayName(),
-		"auth_method":  string(p.AuthMethod()),
-		"enabled":      true,
+		"provider": name,
+		"enabled":  true,
 	})
 }
 
@@ -395,17 +356,13 @@ func (s *Server) handleDisableProvider(w nethttp.ResponseWriter, r *nethttp.Requ
 		return
 	}
 
-	if s.registry != nil {
-		s.registry.SetEnabled(name, false) //nolint:errcheck — provider 미존재 시 무시
-	}
-
 	s.jsonResponse(w, map[string]interface{}{
-		"name":    name,
-		"enabled": false,
+		"provider": name,
+		"enabled":  false,
 	})
 }
 
-// handleCollect는 모든 enabled provider의 즉시 수집을 트리거합니다 (새로고침 버튼용)
+// handleCollect triggers immediate collection from OpenUsage
 func (s *Server) handleCollect(w nethttp.ResponseWriter, r *nethttp.Request) {
 	if r.Method != nethttp.MethodPost {
 		nethttp.Error(w, "Method not allowed", nethttp.StatusMethodNotAllowed)
@@ -418,28 +375,33 @@ func (s *Server) handleCollect(w nethttp.ResponseWriter, r *nethttp.Request) {
 	}
 
 	go func() {
-		if err := s.collector.CollectAll(context.Background()); err != nil {
+		if err := s.collector.CollectAll(r.Context()); err != nil {
 			s.logger.Error("Manual collection failed", "error", err)
 		}
 	}()
 
 	s.jsonResponse(w, map[string]interface{}{
 		"status":  "collecting",
-		"message": "Collection triggered for all enabled providers",
+		"message": "Collection triggered from OpenUsage API",
 	})
 }
 
 // handleHealthz is the health check endpoint
 func (s *Server) handleHealthz(w nethttp.ResponseWriter, r *nethttp.Request) {
-	// Check database connection
 	if err := s.store.DB().Ping(); err != nil {
 		s.jsonError(w, "Database connection failed", nethttp.StatusServiceUnavailable)
 		return
 	}
 
+	openusageHealthy := false
+	if s.openusage != nil {
+		openusageHealthy = s.openusage.IsHealthy()
+	}
+
 	s.jsonResponse(w, map[string]interface{}{
-		"status":    "healthy",
-		"timestamp": time.Now().Format(time.RFC3339),
+		"status":           "healthy",
+		"timestamp":        time.Now().Format(time.RFC3339),
+		"openusage_status": openusageHealthy,
 	})
 }
 
@@ -454,6 +416,63 @@ func (s *Server) jsonError(w nethttp.ResponseWriter, message string, status int)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	json.NewEncoder(w).Encode(map[string]string{"error": message})
+}
+
+// setupRoutes configures all HTTP routes
+func (s *Server) setupRoutes() {
+	// Static files
+	s.mux.HandleFunc("/static/", s.handleStatic)
+
+	// Dashboard
+	s.mux.HandleFunc("/", s.handleDashboard)
+
+	// API endpoints
+	s.mux.HandleFunc("/api/current", s.handleAPICurrent)
+	s.mux.HandleFunc("/api/trends", s.handleAPITrends)
+	s.mux.HandleFunc("/api/forecast", s.handleAPIForecast)
+	s.mux.HandleFunc("/api/providers", s.handleAPIProvidersMeta)
+	s.mux.HandleFunc("/api/providers/", s.handleProviderAction)
+	s.mux.HandleFunc("/api/collect", s.handleCollect)
+	s.mux.HandleFunc("/healthz", s.handleHealthz)
+}
+
+// handleStatic serves static files
+func (s *Server) handleStatic(w nethttp.ResponseWriter, r *nethttp.Request) {
+	path := strings.TrimPrefix(r.URL.Path, "/static/")
+	nethttp.ServeFile(w, r, "static/"+path)
+}
+
+// handleAPIProviders returns list of all providers
+func (s *Server) handleAPIProviders(w nethttp.ResponseWriter, r *nethttp.Request) {
+	if r.Method != nethttp.MethodGet {
+		nethttp.Error(w, "Method not allowed", nethttp.StatusMethodNotAllowed)
+		return
+	}
+
+	providers, err := s.store.ListProviders()
+	if err != nil {
+		s.jsonError(w, "Failed to list providers", nethttp.StatusInternalServerError)
+		return
+	}
+
+	type ProviderInfo struct {
+		ProviderID  string `json:"provider_id"`
+		DisplayName string `json:"display_name"`
+		Enabled     bool   `json:"enabled"`
+	}
+
+	var result []ProviderInfo
+	for _, p := range providers {
+		result = append(result, ProviderInfo{
+			ProviderID:  p.Name,
+			DisplayName: getDisplayName(p.Name),
+			Enabled:     p.Enabled,
+		})
+	}
+
+	s.jsonResponse(w, map[string]interface{}{
+		"providers": result,
+	})
 }
 
 // Start begins serving HTTP requests
@@ -481,9 +500,4 @@ func (s *Server) Start(ctx context.Context) error {
 		return err
 	}
 	return nil
-}
-
-// metricLabel은 메트릭 키를 한글 표시 레이블로 변환합니다
-func metricLabel(metric string) string {
-	return domain.MetricLabel(metric)
 }

@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log/slog"
 	"os"
@@ -12,10 +11,7 @@ import (
 	"github.com/ClaudeSeo/webusage/internal/collector"
 	"github.com/ClaudeSeo/webusage/internal/config"
 	internalhttp "github.com/ClaudeSeo/webusage/internal/http"
-	"github.com/ClaudeSeo/webusage/internal/provider"
-	"github.com/ClaudeSeo/webusage/internal/provider/claude"
-	"github.com/ClaudeSeo/webusage/internal/provider/codex"
-	"github.com/ClaudeSeo/webusage/internal/provider/copilot"
+	"github.com/ClaudeSeo/webusage/internal/openusage"
 	"github.com/ClaudeSeo/webusage/internal/store"
 )
 
@@ -33,10 +29,11 @@ func main() {
 	}))
 
 	logger.Info("Starting AI Usage Dashboard",
-		"version", "1.0.0",
+		"version", "2.0.0", // Major version bump for OpenUsage integration
 		"db_path", cfg.DBPath,
 		"server_host", cfg.ServerHost,
-		"server_port", cfg.ServerPort)
+		"server_port", cfg.ServerPort,
+		"openusage_url", cfg.OpenUsageURL)
 
 	// Initialize database
 	s, err := store.NewStore(cfg.DBPath)
@@ -48,10 +45,15 @@ func main() {
 
 	logger.Info("Database initialized with WAL mode")
 
-	// Setup provider registry + DB 등록 + DB의 enabled 상태 동기화
-	registry := provider.NewRegistry()
-	count := setupProviders(cfg, registry, s, logger)
-	logger.Info("Registered providers", "count", count)
+	// Create OpenUsage client
+	client := openusage.NewClient(cfg.OpenUsageURL)
+
+	// Check OpenUsage availability
+	if !client.IsHealthy() {
+		logger.Warn("OpenUsage API not available at startup",
+			"url", cfg.OpenUsageURL,
+			"hint", "Make sure OpenUsage app is running")
+	}
 
 	// Create context with cancellation
 	ctx, cancel := context.WithCancel(context.Background())
@@ -73,11 +75,11 @@ func main() {
 		logger.Error("Failed to create HTTP server", "error", err)
 		os.Exit(1)
 	}
-	httpServer.SetRegistry(registry)
 
-	// registry에서 직접 provider 조회 — 런타임 enable/disable 반영
-	coll := collector.NewCollector(s, registry, cfg.CollectionInterval, logger)
+	// Create collector with OpenUsage client
+	coll := collector.NewCollector(s, client, cfg.CollectionInterval, logger)
 	httpServer.SetCollector(coll)
+	httpServer.SetOpenUsageClient(client)
 
 	// Run both services
 	errChan := make(chan error, 2)
@@ -104,66 +106,4 @@ func main() {
 	}
 
 	logger.Info("Shutdown complete")
-}
-
-// setupProviders는 provider 인스턴스를 생성하고 Registry와 DB에 등록합니다.
-// DB에 이미 enabled=true인 provider가 있으면 Registry에도 동기화합니다.
-// 반환값: 등록된 provider 수
-func setupProviders(cfg *config.Config, registry *provider.Registry, s *store.Store, logger *slog.Logger) int {
-	providers := []provider.Provider{
-		claude.New(),
-		codex.New(),
-		copilot.New(),
-	}
-
-	for _, p := range providers {
-		// Registry에 등록 (enabled=false 기본값)
-		registry.Register(p)
-
-		// DB에 비활성화 상태로 등록 (INSERT OR IGNORE — 이미 존재하면 무시)
-		configData := map[string]string{
-			"auth_method": string(p.AuthMethod()),
-		}
-		configJSON, err := json.Marshal(configData)
-		if err != nil {
-			logger.Error("Failed to marshal provider config", "provider", p.Name(), "error", err)
-			continue
-		}
-
-		if _, err := s.CreateProviderDisabled(p.Name(), p.Name(), string(configJSON)); err != nil {
-			logger.Error("Failed to register provider in DB", "provider", p.Name(), "error", err)
-		}
-	}
-
-	// DB의 enabled 상태를 Registry에 동기화 + 제거된 provider DB 정리
-	registeredNames := make(map[string]bool)
-	for _, p := range providers {
-		registeredNames[p.Name()] = true
-	}
-
-	dbProviders, err := s.ListProviders()
-	if err != nil {
-		logger.Error("Failed to list providers for sync", "error", err)
-	} else {
-		for _, dp := range dbProviders {
-			if !registeredNames[dp.Name] {
-				// 코드에서 제거된 provider → DB에서도 삭제
-				if err := s.DeleteProviderByName(dp.Name); err != nil {
-					logger.Error("Failed to cleanup removed provider", "provider", dp.Name, "error", err)
-				} else {
-					logger.Info("Cleaned up removed provider from DB", "provider", dp.Name)
-				}
-				continue
-			}
-			if dp.Enabled {
-				if err := registry.SetEnabled(dp.Name, true); err != nil {
-					logger.Warn("Failed to sync enabled state", "provider", dp.Name, "error", err)
-				} else {
-					logger.Info("Restored enabled state from DB", "provider", dp.Name)
-				}
-			}
-		}
-	}
-
-	return len(providers)
 }
