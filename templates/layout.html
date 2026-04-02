@@ -929,15 +929,16 @@
                 const btnClass = isEnabled ? 'disable' : 'enable';
                 const btnText = isEnabled ? '비활성화' : '활성화';
                 const btnAction = isEnabled ? 'disable' : 'enable';
+                const providerName = p.provider_id || p.name;
                 
                 return `<div class="drawer-provider-card">
                     <div class="drawer-provider-info">
-                        <span class="drawer-provider-name">${p.display_name || p.name}</span>
+                        <span class="drawer-provider-name">${p.display_name || providerName}</span>
                         <span class="drawer-provider-badge ${badgeClass}">${badgeText}</span>
                     </div>
-                    <button onclick="toggleProviderInDrawer('${p.name}', '${btnAction}')"
+                    <button onclick="toggleProviderInDrawer('${providerName}', '${btnAction}')"
                         class="drawer-provider-btn ${btnClass}"
-                        id="drawer-btn-${p.name}">
+                        id="drawer-btn-${providerName}">
                         ${btnText}
                     </button>
                 </div>`;

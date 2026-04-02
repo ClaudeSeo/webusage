@@ -110,16 +110,17 @@ function providerManagementCard(p) {
     const btnClass = isEnabled ? 'disable' : 'enable';
     const btnText = isEnabled ? '비활성화' : '활성화';
     const btnAction = isEnabled ? 'disable' : 'enable';
+    const providerName = p.provider_id || p.name;
 
-    return `<div id="pm-card-${p.name}" class="provider-card${isEnabled ? '' : ' disabled'}">
+    return `<div id="pm-card-${providerName}" class="provider-card${isEnabled ? '' : ' disabled'}">
         <div class="provider-card-header">
-            <span class="provider-card-name">${p.display_name || p.name}</span>
+            <span class="provider-card-name">${p.display_name || providerName}</span>
             <span class="provider-card-badge ${statusClass}">${badgeText}</span>
         </div>
         <div class="provider-card-method">${p.auth_method || ''}</div>
-        <button onclick="toggleProvider('${p.name}', '${btnAction}')"
+        <button onclick="toggleProvider('${providerName}', '${btnAction}')"
             class="provider-card-btn ${btnClass}"
-            id="pm-btn-${p.name}">
+            id="pm-btn-${providerName}">
             ${btnText}
         </button>
     </div>`;
