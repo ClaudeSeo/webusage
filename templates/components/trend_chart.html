@@ -213,12 +213,12 @@ let currentProviderFilter = 'all'; // 'all' or specific provider name
 let trendDataCache = null;
 let providerLimits = {}; // Store limits for reference lines
 
-// Provider colors (consistent across charts)
+// Provider colors (Vercel style - clean white/blue)
 const PROVIDER_COLORS = {
-    'openai': { bg: 'rgba(16, 185, 129, 0.2)', border: 'rgb(16, 185, 129)' },
-    'anthropic': { bg: 'rgba(168, 85, 247, 0.2)', border: 'rgb(168, 85, 247)' },
-    'google': { bg: 'rgba(59, 130, 246, 0.2)', border: 'rgb(59, 130, 246)' },
-    'default': { bg: 'rgba(100, 116, 139, 0.2)', border: 'rgb(100, 116, 139)' }
+    'openai': { bg: 'rgba(255, 255, 255, 0.1)', border: 'rgb(255, 255, 255)', gradient: 'rgba(255, 255, 255, 0.3)' },
+    'anthropic': { bg: 'rgba(0, 112, 243, 0.1)', border: 'rgb(0, 112, 243)', gradient: 'rgba(0, 112, 243, 0.3)' },
+    'google': { bg: 'rgba(255, 255, 255, 0.1)', border: 'rgb(255, 255, 255)', gradient: 'rgba(255, 255, 255, 0.3)' },
+    'default': { bg: 'rgba(255, 255, 255, 0.1)', border: 'rgb(255, 255, 255)', gradient: 'rgba(255, 255, 255, 0.3)' }
 };
 
 function getProviderColor(providerName, index) {
@@ -506,29 +506,29 @@ function renderTrendChart(data, range) {
     // Build Y-axis grid lines for reference
     const yGridLines = [];
     if (hasLimit && currentMode === 'cumulative') {
-        // 80% warning line
+        // 80% warning line (Vercel Orange)
         yGridLines.push({
             y: warningValue,
-            borderColor: 'rgba(234, 179, 8, 0.8)',
+            borderColor: '#F5A623',
             borderWidth: 2,
             borderDash: [5, 5],
             label: {
                 display: true,
                 content: '80% Warning',
-                color: 'rgba(234, 179, 8, 1)',
+                color: '#F5A623',
                 font: { size: 10 }
             }
         });
-        // 100% limit line
+        // 100% limit line (Vercel Red)
         yGridLines.push({
             y: limitValue,
-            borderColor: 'rgba(239, 68, 68, 0.8)',
+            borderColor: '#E00',
             borderWidth: 2,
             borderDash: [],
             label: {
                 display: true,
                 content: '100% Limit',
-                color: 'rgba(239, 68, 68, 1)',
+                color: '#E00',
                 font: { size: 10 }
             }
         });
@@ -565,17 +565,19 @@ function renderTrendChart(data, range) {
                     display: providers.length > 1,
                     position: 'top',
                     labels: {
-                        color: '#f1f5f9',
+                        color: '#888888',
                         usePointStyle: true,
                         padding: 15
                     }
                 },
                 tooltip: {
-                    backgroundColor: 'rgba(30, 41, 59, 0.95)',
-                    titleColor: '#f1f5f9',
-                    bodyColor: '#94a3b8',
-                    borderColor: '#475569',
+                    backgroundColor: '#111111',
+                    titleColor: '#EDEDED',
+                    bodyColor: '#888888',
+                    borderColor: '#333333',
                     borderWidth: 1,
+                    padding: 12,
+                    cornerRadius: 8,
                     callbacks: {
                         label: function(context) {
                             const val = context.parsed.y;
@@ -617,9 +619,12 @@ function renderTrendChart(data, range) {
             },
             scales: {
                 x: {
-                    grid: { color: '#334155' },
+                    grid: { 
+                        color: '#333333',
+                        drawBorder: false
+                    },
                     ticks: {
-                        color: '#94a3b8',
+                        color: '#888888',
                         maxRotation: 45,
                         minRotation: 45
                     }
@@ -627,12 +632,15 @@ function renderTrendChart(data, range) {
                 y: {
                     beginAtZero: true,
                     max: yAxisMax,
-                    grid: { color: '#334155' },
-                    ticks: { color: '#94a3b8' },
+                    grid: { 
+                        color: '#333333',
+                        drawBorder: false
+                    },
+                    ticks: { color: '#888888' },
                     title: {
                         display: true,
                         text: currentMode === 'delta' ? '소비량 (Delta)' : '누적 사용량',
-                        color: '#94a3b8'
+                        color: '#888888'
                     }
                 }
             }
