@@ -68,12 +68,25 @@
             margin: 0 auto;
             padding: 2rem;
         }
+
+        @media (max-width: 640px) {
+            .container {
+                padding: 1rem;
+            }
+        }
         
         header {
             background: linear-gradient(180deg, var(--bg-secondary) 0%, transparent 100%);
             border-bottom: 1px solid var(--border-color);
             padding: 1.5rem 0;
             margin-bottom: 2rem;
+        }
+
+        @media (max-width: 640px) {
+            header {
+                padding: 1rem 0;
+                margin-bottom: 1rem;
+            }
         }
         
         header h1 {
@@ -83,12 +96,25 @@
             display: flex;
             align-items: center;
             gap: 0.5rem;
+            word-break: keep-all;
+        }
+
+        @media (max-width: 640px) {
+            header h1 {
+                font-size: 1.25rem;
+            }
         }
         
         header .subtitle {
             color: var(--text-secondary);
             font-size: 0.875rem;
             margin-top: 0.25rem;
+        }
+
+        @media (max-width: 640px) {
+            header .subtitle {
+                font-size: 0.75rem;
+            }
         }
         
         /* Dashboard grid with animation */
@@ -121,6 +147,12 @@
                         box-shadow var(--transition-normal),
                         border-color var(--transition-fast);
             animation: fadeInUp 0.4s ease backwards;
+        }
+
+        @media (max-width: 640px) {
+            .card {
+                padding: 1rem;
+            }
         }
         
         .card:nth-child(1) { animation-delay: 0ms; }
@@ -249,6 +281,12 @@
             margin-bottom: 2rem;
             animation: fadeInUp 0.4s ease 0.25s backwards;
         }
+
+        @media (max-width: 640px) {
+            .chart-container {
+                padding: 1rem;
+            }
+        }
         
         .chart-header {
             display: flex;
@@ -339,6 +377,24 @@
                 flex-direction: column;
                 gap: 1rem;
                 align-items: flex-start;
+            }
+        }
+
+        @media (max-width: 640px) {
+            header h1 {
+                font-size: 1.25rem;
+            }
+
+            header .subtitle {
+                font-size: 0.75rem;
+            }
+
+            .chart-container {
+                padding: 1rem;
+            }
+
+            .chart-title {
+                font-size: 1rem;
             }
         }
         
