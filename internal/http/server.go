@@ -254,6 +254,7 @@ func (s *Server) handleDashboard(w nethttp.ResponseWriter, r *nethttp.Request) {
 }
 
 // handleCurrentUsage returns latest usage for all providers
+// Deprecated: Use handleAPICurrent for cycle-aware data
 func (s *Server) handleCurrentUsage(w nethttp.ResponseWriter, r *nethttp.Request) {
 	if r.Method != nethttp.MethodGet {
 		nethttp.Error(w, "Method not allowed", nethttp.StatusMethodNotAllowed)
@@ -291,6 +292,7 @@ func (s *Server) handleCurrentUsage(w nethttp.ResponseWriter, r *nethttp.Request
 }
 
 // handleTrends returns usage trends over time
+// Deprecated: Use handleAPITrends for cycle-aware trends
 func (s *Server) handleTrends(w nethttp.ResponseWriter, r *nethttp.Request) {
 	if r.Method != nethttp.MethodGet {
 		nethttp.Error(w, "Method not allowed", nethttp.StatusMethodNotAllowed)
@@ -353,8 +355,9 @@ func (s *Server) SetCollector(c *collector.Collector) {
 	s.collector = c
 }
 
-// handleProviders returns list of configured providers, including registry metadata if available
-func (s *Server) handleProviders(w nethttp.ResponseWriter, r *nethttp.Request) {
+// handleProvidersLegacy returns list of configured providers, including registry metadata if available
+// Deprecated: Use handleAPIProvidersMeta for cycle-aware metadata
+func (s *Server) handleProvidersLegacy(w nethttp.ResponseWriter, r *nethttp.Request) {
 	if r.Method != nethttp.MethodGet {
 		nethttp.Error(w, "Method not allowed", nethttp.StatusMethodNotAllowed)
 		return
