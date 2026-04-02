@@ -382,7 +382,11 @@ async function loadTrendData(range = '24h') {
         if (container) {
             const canvasWrapper = container.querySelector('.trend-chart-canvas-wrapper');
             if (canvasWrapper) {
-                canvasWrapper.innerHTML = '<div class="trend-chart-error">추이 데이터를 불러올 수 없습니다.</div>';
+                canvasWrapper.innerHTML = `<div class="trend-chart-empty">
+                    <div class="trend-chart-empty-icon">📊</div>
+                    <div class="trend-chart-empty-text">데이터를 불러올 수 없습니다</div>
+                    <div class="trend-chart-empty-hint">잠시 후 다시 시도해주세요</div>
+                </div>`;
             }
         }
     }
