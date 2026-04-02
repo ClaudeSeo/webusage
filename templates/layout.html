@@ -644,6 +644,51 @@
             opacity: 1;
             pointer-events: auto;
         }
+        
+        /* Floating Action Button (FAB) - Desktop only */
+        .fab-button {
+            position: fixed;
+            bottom: 2rem;
+            right: 2rem;
+            width: 56px;
+            height: 56px;
+            border-radius: 50%;
+            background: rgba(17, 17, 17, 0.9);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            color: var(--text-primary);
+            font-size: 1.5rem;
+            cursor: pointer;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+            transition: all 0.3s ease;
+            z-index: 999;
+        }
+        
+        .fab-button:hover {
+            transform: scale(1.05);
+            box-shadow: 0 6px 24px rgba(0, 0, 0, 0.6);
+            border-color: rgba(255, 255, 255, 0.2);
+        }
+        
+        .desktop-only {
+            display: none;
+        }
+        
+        .mobile-only {
+            display: block;
+        }
+        
+        @media (min-width: 768px) {
+            .desktop-only {
+                display: flex;
+                align-items: center;
+                justify-content: center;
+            }
+            .mobile-only {
+                display: none;
+            }
+        }
     </style>
 </head>
 <body>
@@ -653,11 +698,17 @@
                 <h1>📊 AI 사용량 관제 대시보드</h1>
                 <p class="subtitle">실시간 API 사용량 모니터링</p>
             </div>
-            <button id="settingsBtn" class="btn" onclick="toggleDrawer()" style="font-size: 1.25rem; padding: 0.5rem 1rem;">
-                ⚙️ 설정
+            <!-- Mobile: Hamburger Menu -->
+            <button id="mobileMenuBtn" class="btn mobile-only" onclick="toggleDrawer()" style="font-size: 1.5rem; padding: 0.5rem; background: transparent; border: none;">
+                ☰
             </button>
         </div>
     </header>
+    
+    <!-- Desktop: Floating Action Button (FAB) -->
+    <button id="fabSettingsBtn" class="fab-button desktop-only" onclick="toggleDrawer()" title="설정">
+        ⚙️
+    </button>
     
     <!-- Settings Drawer -->
     <div id="settingsDrawer" class="settings-drawer">
