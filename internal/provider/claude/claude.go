@@ -198,6 +198,7 @@ func (p *ClaudeProvider) FetchUsage(ctx context.Context) ([]provider.UsagePoint,
 		return []provider.UsagePoint{}, nil
 	}
 	req.Header.Set("Authorization", "Bearer "+token.AccessToken)
+	req.Header.Set("Accept", "application/json")
 	// OAuth usage API는 별도 beta 헤더 필요
 	req.Header.Set("anthropic-beta", "oauth-2025-04-20")
 

@@ -30,7 +30,7 @@ func LoadConfig() (*Config, error) {
 		fmt.Println("No .env file found, using environment variables")
 	}
 
-	interval := getIntEnv("COLLECTION_INTERVAL", 300) // 5분 기본값
+	interval := getIntEnv("COLLECTION_INTERVAL", 900) // 15분 기본값
 
 	return &Config{
 		DBPath:             getEnv("DB_PATH", "./data/usage.db"),
