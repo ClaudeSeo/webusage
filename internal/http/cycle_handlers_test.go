@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ClaudeSeo/webusage/internal/domain"
 	"github.com/ClaudeSeo/webusage/internal/store"
 )
 
@@ -40,7 +41,7 @@ func setupTestServerForCycle(t *testing.T) (*Server, func()) {
 	return server, cleanup
 }
 
-// TestCycleAware_Current validates the /api/v1/current endpoint
+// TestCycleAware_Current validates the /api/current endpoint
 func TestCycleAware_Current(t *testing.T) {
 	server, cleanup := setupTestServerForCycle(t)
 	defer cleanup()
@@ -73,7 +74,7 @@ func TestCycleAware_Current(t *testing.T) {
 	server.store.CreateUsageSnapshot(copilotSnapshot)
 
 	// Test the endpoint
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/current", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/current", nil)
 	w := httptest.NewRecorder()
 
 	server.mux.ServeHTTP(w, req)
@@ -82,7 +83,7 @@ func TestCycleAware_Current(t *testing.T) {
 		t.Fatalf("Expected status 200, got %d", w.Code)
 	}
 
-	var resp map[string]CurrentCycleInfo
+	var resp map[string]domain.CurrentCycleInfo
 	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("Failed to parse response: %v", err)
 	}
@@ -115,7 +116,7 @@ func TestCycleAware_Current(t *testing.T) {
 	}
 }
 
-// TestCycleAware_Trends validates the /api/v1/trends endpoint
+// TestCycleAware_Trends validates the /api/trends endpoint
 func TestCycleAware_Trends(t *testing.T) {
 	server, cleanup := setupTestServerForCycle(t)
 	defer cleanup()
@@ -153,7 +154,7 @@ func TestCycleAware_Trends(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			url := "/api/v1/trends?provider_id=claude&view=" + tc.view + "&mode=" + tc.mode + "&bucket=" + tc.bucket
+			url := "/api/trends?provider_id=claude&view=" + tc.view + "&mode=" + tc.mode + "&bucket=" + tc.bucket
 			req := httptest.NewRequest(http.MethodGet, url, nil)
 			w := httptest.NewRecorder()
 
@@ -164,7 +165,7 @@ func TestCycleAware_Trends(t *testing.T) {
 			}
 
 			if w.Code == http.StatusOK {
-				var resp ProviderTrends
+				var resp domain.ProviderTrends
 				if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
 					t.Fatalf("Failed to parse response: %v", err)
 				}
@@ -188,7 +189,7 @@ func TestCycleAware_Trends_MissingProvider(t *testing.T) {
 	server, cleanup := setupTestServerForCycle(t)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/trends?provider_id=nonexistent", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/trends?provider_id=nonexistent", nil)
 	w := httptest.NewRecorder()
 
 	server.mux.ServeHTTP(w, req)
@@ -203,7 +204,7 @@ func TestCycleAware_Trends_NoProviderID(t *testing.T) {
 	server, cleanup := setupTestServerForCycle(t)
 	defer cleanup()
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/trends", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/trends", nil)
 	w := httptest.NewRecorder()
 
 	server.mux.ServeHTTP(w, req)
@@ -213,7 +214,7 @@ func TestCycleAware_Trends_NoProviderID(t *testing.T) {
 	}
 }
 
-// TestCycleAware_Forecast validates the /api/v1/forecast endpoint
+// TestCycleAware_Forecast validates the /api/forecast endpoint
 func TestCycleAware_Forecast(t *testing.T) {
 	server, cleanup := setupTestServerForCycle(t)
 	defer cleanup()
@@ -236,7 +237,7 @@ func TestCycleAware_Forecast(t *testing.T) {
 	}
 
 	// Test all providers forecast
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/forecast", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/forecast", nil)
 	w := httptest.NewRecorder()
 
 	server.mux.ServeHTTP(w, req)
@@ -245,7 +246,7 @@ func TestCycleAware_Forecast(t *testing.T) {
 		t.Fatalf("Expected status 200, got %d", w.Code)
 	}
 
-	var resp map[string][]ForecastInfo
+	var resp map[string][]domain.ForecastInfo
 	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("Failed to parse response: %v", err)
 	}
@@ -259,7 +260,7 @@ func TestCycleAware_Forecast(t *testing.T) {
 	}
 
 	// Find claude forecast
-	var claudeForecast *ForecastInfo
+	var claudeForecast *domain.ForecastInfo
 	for i := range forecasts {
 		if forecasts[i].ProviderID == "claude" {
 			claudeForecast = &forecasts[i]
@@ -303,7 +304,7 @@ func TestCycleAware_Forecast_SingleProvider(t *testing.T) {
 		server.store.CreateUsageSnapshot(snapshot)
 	}
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/forecast?provider_id=claude", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/forecast?provider_id=claude", nil)
 	w := httptest.NewRecorder()
 
 	server.mux.ServeHTTP(w, req)
@@ -312,7 +313,7 @@ func TestCycleAware_Forecast_SingleProvider(t *testing.T) {
 		t.Fatalf("Expected status 200, got %d", w.Code)
 	}
 
-	var resp ForecastInfo
+	var resp domain.ForecastInfo
 	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("Failed to parse response: %v", err)
 	}
@@ -322,7 +323,7 @@ func TestCycleAware_Forecast_SingleProvider(t *testing.T) {
 	}
 }
 
-// TestCycleAware_ProvidersMeta validates the /api/v1/providers endpoint
+// TestCycleAware_ProvidersMeta validates the /api/providers endpoint
 func TestCycleAware_ProvidersMeta(t *testing.T) {
 	server, cleanup := setupTestServerForCycle(t)
 	defer cleanup()
@@ -331,7 +332,7 @@ func TestCycleAware_ProvidersMeta(t *testing.T) {
 	server.store.CreateProvider("claude", `{"auth_method":"oauth_file"}`)
 	server.store.CreateProvider("copilot", `{"auth_method":"keychain"}`)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/providers", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/providers", nil)
 	w := httptest.NewRecorder()
 
 	server.mux.ServeHTTP(w, req)
@@ -340,7 +341,7 @@ func TestCycleAware_ProvidersMeta(t *testing.T) {
 		t.Fatalf("Expected status 200, got %d", w.Code)
 	}
 
-	var resp map[string][]ProviderMetadata
+	var resp map[string][]domain.ProviderMetadata
 	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("Failed to parse response: %v", err)
 	}
@@ -375,10 +376,10 @@ func TestCycleAware_MethodNotAllowed(t *testing.T) {
 	defer cleanup()
 
 	endpoints := []string{
-		"/api/v1/current",
-		"/api/v1/trends?provider_id=test",
-		"/api/v1/forecast",
-		"/api/v1/providers",
+		"/api/current",
+		"/api/trends?provider_id=test",
+		"/api/forecast",
+		"/api/providers",
 	}
 
 	for _, endpoint := range endpoints {

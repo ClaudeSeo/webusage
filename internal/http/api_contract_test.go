@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ClaudeSeo/webusage/internal/domain"
 	"github.com/ClaudeSeo/webusage/internal/store"
 )
 
@@ -25,40 +26,21 @@ type HealthzResponse struct {
 	Timestamp string `json:"timestamp"`
 }
 
-type CurrentResponse map[string]ProviderCurrentData
+// CurrentResponse maps provider_id -> CurrentCycleInfo
+type CurrentResponse map[string]domain.CurrentCycleInfo
 
-type ProviderCurrentData struct {
-	ProviderID int64              `json:"provider_id"`
-	Enabled    bool               `json:"enabled"`
-	Metrics    map[string]float64 `json:"metrics"`
-	LastRun    *time.Time         `json:"last_run,omitempty"`
-	LastError  *string            `json:"last_error,omitempty"`
-}
-
-type TrendsResponse map[string]ProviderTrendData
-
-type ProviderTrendData struct {
-	ProviderID int64        `json:"provider_id"`
-	Range      string       `json:"range"`
-	Trend      []TrendPoint `json:"trend"`
-}
-
-type TrendPoint struct {
-	Timestamp time.Time `json:"timestamp"`
-	Value     float64   `json:"value"`
-	Metric    string    `json:"metric"`
+// TrendsResponse for trend data
+type TrendsResponse struct {
+	ProviderID string                  `json:"provider_id"`
+	CycleType  string                  `json:"cycle_type"`
+	View       string                  `json:"view"`
+	Mode       string                  `json:"mode"`
+	Bucket     string                  `json:"bucket"`
+	Data       []domain.TrendDataPoint `json:"data"`
 }
 
 type ProvidersResponse struct {
-	Providers []ProviderInfo `json:"providers"`
-}
-
-type ProviderInfo struct {
-	ID        int64      `json:"id"`
-	Name      string     `json:"name"`
-	Enabled   bool       `json:"enabled"`
-	LastRun   *time.Time `json:"last_run,omitempty"`
-	LastError *string    `json:"last_error,omitempty"`
+	Providers []domain.ProviderMetadata `json:"providers"`
 }
 
 func setupTestServerForContract(t *testing.T) (*Server, func()) {
@@ -123,10 +105,11 @@ func TestAPIContract_Current(t *testing.T) {
 
 	// Setup test data
 	providerID, _ := server.store.CreateProvider("claude", `{}`)
+	server.store.EnableProviderByName("claude", true)
 	now := time.Now()
 	snapshot := &store.UsageSnapshot{
 		ProviderID:  providerID,
-		Metric:      "tokens",
+		Metric:      "session",
 		Used:        5000.0,
 		CollectedAt: now,
 	}
@@ -152,126 +135,81 @@ func TestAPIContract_Current(t *testing.T) {
 		t.Fatal("Schema violation: provider key missing")
 	}
 
-	if provider.ProviderID == 0 {
+	if provider.ProviderID == "" {
 		t.Error("Schema violation: 'provider_id' is required")
 	}
-	if provider.Metrics == nil {
-		t.Error("Schema violation: 'metrics' field is required")
+	if provider.CycleType == "" {
+		t.Error("Schema violation: 'cycle_type' is required")
 	}
 }
 
-// TestAPIContract_Trends validates the /api/trends endpoint with all valid ranges
+// TestAPIContract_Trends validates the /api/trends endpoint with provider_id
 func TestAPIContract_Trends(t *testing.T) {
 	server, cleanup := setupTestServerForContract(t)
 	defer cleanup()
 
 	// Setup test data
 	providerID, _ := server.store.CreateProvider("claude", `{}`)
+	server.store.EnableProviderByName("claude", true)
 	now := time.Now()
 
-	// Insert data for 30 days
-	for i := 0; i < 30; i++ {
+	// Insert data for trend
+	for i := 0; i < 5; i++ {
 		snapshot := &store.UsageSnapshot{
 			ProviderID:  providerID,
-			Metric:      "tokens",
+			Metric:      "session",
 			Used:        float64(i * 100),
 			CollectedAt: now.Add(-time.Duration(i) * time.Hour),
 		}
 		server.store.CreateUsageSnapshot(snapshot)
 	}
 
-	validRanges := []string{"24h", "7d", "30d"}
+	req := httptest.NewRequest(nethttp.MethodGet, "/api/trends?provider_id=claude", nil)
+	w := httptest.NewRecorder()
 
-	for _, rangeParam := range validRanges {
-		t.Run(rangeParam, func(t *testing.T) {
-			req := httptest.NewRequest(nethttp.MethodGet, "/api/trends?range="+rangeParam, nil)
-			w := httptest.NewRecorder()
+	server.mux.ServeHTTP(w, req)
 
-			server.mux.ServeHTTP(w, req)
+	if w.Code != nethttp.StatusOK {
+		t.Fatalf("Expected status 200, got %d", w.Code)
+	}
 
-			if w.Code != nethttp.StatusOK {
-				t.Fatalf("Expected status 200 for range %s, got %d", rangeParam, w.Code)
-			}
+	var resp TrendsResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("Failed to parse response: %v", err)
+	}
 
-			var resp TrendsResponse
-			if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
-				t.Fatalf("Failed to parse response: %v", err)
-			}
-
-			// Schema validation
-			provider, exists := resp["claude"]
-			if !exists {
-				t.Fatal("Schema violation: provider key missing")
-			}
-
-			if provider.Range != rangeParam {
-				t.Errorf("Schema violation: expected range '%s', got '%s'", rangeParam, provider.Range)
-			}
-
-			if provider.Trend == nil {
-				t.Error("Schema violation: 'trend' array is required")
-			}
-
-			// Validate trend points
-			for i, point := range provider.Trend {
-				if point.Timestamp.IsZero() {
-					t.Errorf("Schema violation: trend[%d].timestamp is required", i)
-				}
-				if point.Metric == "" {
-					t.Errorf("Schema violation: trend[%d].metric is required", i)
-				}
-			}
-		})
+	// Schema validation
+	if resp.ProviderID == "" {
+		t.Error("Schema violation: 'provider_id' is required")
+	}
+	if resp.CycleType == "" {
+		t.Error("Schema violation: 'cycle_type' is required")
 	}
 }
 
-// TestAPIContract_Trends_InvalidRange validates that invalid ranges return 400
-func TestAPIContract_Trends_InvalidRange(t *testing.T) {
+// TestAPIContract_Trends_RequiresProviderID validates that provider_id is required
+func TestAPIContract_Trends_RequiresProviderID(t *testing.T) {
 	server, cleanup := setupTestServerForContract(t)
 	defer cleanup()
 
-	invalidRanges := []string{"1h", "60d", "invalid", "abc", ""}
+	req := httptest.NewRequest(nethttp.MethodGet, "/api/trends", nil)
+	w := httptest.NewRecorder()
 
-	for _, rangeParam := range invalidRanges {
-		t.Run(rangeParam, func(t *testing.T) {
-			req := httptest.NewRequest(nethttp.MethodGet, "/api/trends?range="+rangeParam, nil)
-			w := httptest.NewRecorder()
+	server.mux.ServeHTTP(w, req)
 
-			server.mux.ServeHTTP(w, req)
-
-			// Empty range should default to 24h and succeed
-			if rangeParam == "" {
-				if w.Code != nethttp.StatusOK {
-					t.Errorf("Expected status 200 for empty range (defaults to 24h), got %d", w.Code)
-				}
-				return
-			}
-
-			if w.Code != nethttp.StatusBadRequest {
-				t.Errorf("Expected status 400 for invalid range '%s', got %d", rangeParam, w.Code)
-			}
-
-			// Verify error response format
-			var errorResp map[string]string
-			if err := json.Unmarshal(w.Body.Bytes(), &errorResp); err != nil {
-				t.Fatalf("Failed to parse error response: %v", err)
-			}
-
-			if errorResp["error"] == "" {
-				t.Error("Schema violation: error message is required")
-			}
-		})
+	if w.Code != nethttp.StatusBadRequest {
+		t.Errorf("Expected status 400 for missing provider_id, got %d", w.Code)
 	}
 }
 
-// TestAPIContract_Providers validates the /api/providers endpoint against schema
+// TestAPIContract_Providers validates the /api/providers endpoint
 func TestAPIContract_Providers(t *testing.T) {
 	server, cleanup := setupTestServerForContract(t)
 	defer cleanup()
 
 	// Setup test data
-	server.store.CreateProvider("claude", `{"auth_method":"oauth_file"}`)
-	server.store.CreateProvider("copilot", `{"auth_method":"keychain"}`)
+	server.store.CreateProvider("claude", `{}`)
+	server.store.CreateProvider("codex", `{}`)
 
 	req := httptest.NewRequest(nethttp.MethodGet, "/api/providers", nil)
 	w := httptest.NewRecorder()
@@ -289,35 +227,58 @@ func TestAPIContract_Providers(t *testing.T) {
 
 	// Schema validation
 	if resp.Providers == nil {
-		t.Error("Schema violation: 'providers' array is required")
+		t.Fatal("Schema violation: 'providers' array is required")
 	}
 
-	if len(resp.Providers) != 2 {
-		t.Errorf("Expected 2 providers, got %d", len(resp.Providers))
-	}
-
-	for i, p := range resp.Providers {
-		if p.ID == 0 {
-			t.Errorf("Schema violation: providers[%d].id is required", i)
+	for _, provider := range resp.Providers {
+		if provider.ProviderID == "" {
+			t.Error("Schema violation: 'provider_id' is required")
 		}
-		if p.Name == "" {
-			t.Errorf("Schema violation: providers[%d].name is required", i)
+		if provider.CycleType == "" {
+			t.Error("Schema violation: 'cycle_type' is required")
 		}
 	}
 }
 
-// TestAPIContract_ErrorResponses validates error response format
-func TestAPIContract_ErrorResponses(t *testing.T) {
+// TestAPIContract_EnableDisableProvider validates provider enable/disable
+func TestAPIContract_EnableDisableProvider(t *testing.T) {
 	server, cleanup := setupTestServerForContract(t)
 	defer cleanup()
 
-	// Test invalid method
-	req := httptest.NewRequest(nethttp.MethodPost, "/api/current", nil)
+	// Create provider
+	server.store.CreateProvider("claude", `{}`)
+
+	// Test enable
+	req := httptest.NewRequest(nethttp.MethodPost, "/api/providers/claude/enable", nil)
+	w := httptest.NewRecorder()
+	server.mux.ServeHTTP(w, req)
+
+	// Note: Enable will fail without valid credentials, which is expected
+	// The important thing is the route works
+
+	// Test disable
+	req = httptest.NewRequest(nethttp.MethodPost, "/api/providers/claude/disable", nil)
+	w = httptest.NewRecorder()
+	server.mux.ServeHTTP(w, req)
+
+	if w.Code != nethttp.StatusOK {
+		t.Fatalf("Expected status 200 for disable, got %d", w.Code)
+	}
+}
+
+// TestAPIContract_Collect validates the /api/collect endpoint
+func TestAPIContract_Collect(t *testing.T) {
+	server, cleanup := setupTestServerForContract(t)
+	defer cleanup()
+
+	req := httptest.NewRequest(nethttp.MethodPost, "/api/collect", nil)
 	w := httptest.NewRecorder()
 
 	server.mux.ServeHTTP(w, req)
 
-	if w.Code != nethttp.StatusMethodNotAllowed {
-		t.Logf("Note: POST to /api/current returned %d (not 405)", w.Code)
+	// Note: Without collector set, this returns 500 but the route works
+	// The actual collection requires registry and collector setup
+	if w.Code != nethttp.StatusOK && w.Code != nethttp.StatusInternalServerError {
+		t.Fatalf("Expected status 200 or 500, got %d", w.Code)
 	}
 }

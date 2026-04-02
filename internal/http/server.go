@@ -13,8 +13,8 @@ import (
 	"time"
 
 	"github.com/ClaudeSeo/webusage/internal/collector"
+	"github.com/ClaudeSeo/webusage/internal/domain"
 	"github.com/ClaudeSeo/webusage/internal/provider"
-	"github.com/ClaudeSeo/webusage/internal/stats"
 	"github.com/ClaudeSeo/webusage/internal/store"
 )
 
@@ -228,15 +228,15 @@ func (s *Server) handleDashboard(w nethttp.ResponseWriter, r *nethttp.Request) {
 		snapshots, err := s.store.GetLatestUsageByProvider(p.ID)
 		if err == nil && len(snapshots) > 0 {
 			now := time.Now()
-			
+
 			// 기본 스냅샷 (첫 번째 메트릭 기준)
 			primarySnapshot := snapshots[0]
 			for _, snap := range snapshots {
-				if cycleConfig.CycleType == CycleTypeRolling5h && snap.Metric == "session" {
+				if cycleConfig.CycleType == domain.CycleTypeRolling5h && snap.Metric == "session" {
 					primarySnapshot = snap
 					break
 				}
-				if cycleConfig.CycleType == CycleTypeMonthly && (snap.Metric == "premium_interactions" || snap.Metric == "chat") {
+				if cycleConfig.CycleType == domain.CycleTypeMonthly && (snap.Metric == "premium_interactions" || snap.Metric == "chat") {
 					primarySnapshot = snap
 					break
 				}
@@ -291,98 +291,6 @@ func (s *Server) handleDashboard(w nethttp.ResponseWriter, r *nethttp.Request) {
 	}
 }
 
-// handleCurrentUsage returns latest usage for all providers
-// Deprecated: Use handleAPICurrent for cycle-aware data
-func (s *Server) handleCurrentUsage(w nethttp.ResponseWriter, r *nethttp.Request) {
-	if r.Method != nethttp.MethodGet {
-		nethttp.Error(w, "Method not allowed", nethttp.StatusMethodNotAllowed)
-		return
-	}
-
-	providers, err := s.store.ListProviders()
-	if err != nil {
-		s.jsonError(w, "Failed to list providers", nethttp.StatusInternalServerError)
-		return
-	}
-
-	result := make(map[string]interface{})
-	for _, p := range providers {
-		snapshots, err := s.store.GetLatestUsageByProvider(p.ID)
-		if err != nil {
-			continue
-		}
-
-		metrics := make(map[string]float64)
-		for _, snap := range snapshots {
-			metrics[snap.Metric] = snap.Used
-		}
-
-		result[p.Name] = map[string]interface{}{
-			"provider_id": p.ID,
-			"enabled":     p.Enabled,
-			"metrics":     metrics,
-			"last_run":    p.LastRun,
-			"last_error":  p.LastError,
-		}
-	}
-
-	s.jsonResponse(w, result)
-}
-
-// handleTrends returns usage trends over time
-// Deprecated: Use handleAPITrends for cycle-aware trends
-func (s *Server) handleTrends(w nethttp.ResponseWriter, r *nethttp.Request) {
-	if r.Method != nethttp.MethodGet {
-		nethttp.Error(w, "Method not allowed", nethttp.StatusMethodNotAllowed)
-		return
-	}
-
-	rangeParam := r.URL.Query().Get("range")
-	if rangeParam == "" {
-		rangeParam = "24h"
-	}
-
-	// stats 패키지의 range 검증 + 시간 범위 계산 재사용
-	if !stats.IsValidRange(rangeParam) {
-		s.jsonError(w, fmt.Sprintf("Invalid range '%s'. Valid values: 24h, 7d, 30d", rangeParam), nethttp.StatusBadRequest)
-		return
-	}
-
-	tr := stats.GetTimeRange(stats.RangeType(rangeParam))
-	startTime, endTime := tr.Start, tr.End
-
-	providers, err := s.store.ListProviders()
-	if err != nil {
-		s.jsonError(w, "Failed to list providers", nethttp.StatusInternalServerError)
-		return
-	}
-
-	result := make(map[string]interface{})
-	for _, p := range providers {
-		snapshots, err := s.store.GetUsageTrends(p.ID, "", startTime, endTime)
-		if err != nil {
-			continue
-		}
-
-		var trendData []map[string]interface{}
-		for _, snap := range snapshots {
-			trendData = append(trendData, map[string]interface{}{
-				"timestamp": snap.CollectedAt,
-				"value":     snap.Used,
-				"metric":    snap.Metric,
-			})
-		}
-
-		result[p.Name] = map[string]interface{}{
-			"provider_id": p.ID,
-			"range":       rangeParam,
-			"trend":       trendData,
-		}
-	}
-
-	s.jsonResponse(w, result)
-}
-
 // SetRegistry는 provider Registry를 주입합니다
 func (s *Server) SetRegistry(r *provider.Registry) {
 	s.registry = r
@@ -391,58 +299,6 @@ func (s *Server) SetRegistry(r *provider.Registry) {
 // SetCollector는 Collector를 주입합니다 (즉시 수집, 새로고침 기능)
 func (s *Server) SetCollector(c *collector.Collector) {
 	s.collector = c
-}
-
-// handleProvidersLegacy returns list of configured providers, including registry metadata if available
-// Deprecated: Use handleAPIProvidersMeta for cycle-aware metadata
-func (s *Server) handleProvidersLegacy(w nethttp.ResponseWriter, r *nethttp.Request) {
-	if r.Method != nethttp.MethodGet {
-		nethttp.Error(w, "Method not allowed", nethttp.StatusMethodNotAllowed)
-		return
-	}
-
-	providers, err := s.store.ListProviders()
-	if err != nil {
-		s.jsonError(w, "Failed to list providers", nethttp.StatusInternalServerError)
-		return
-	}
-
-	type providerResponse struct {
-		ID          int64      `json:"id"`
-		Name        string     `json:"name"`
-		DisplayName string     `json:"display_name"`
-		AuthMethod  string     `json:"auth_method"`
-		Enabled     bool       `json:"enabled"`
-		LastRun     *time.Time `json:"last_run,omitempty"`
-		LastError   *string    `json:"last_error,omitempty"`
-	}
-
-	result := make([]providerResponse, 0, len(providers))
-	for _, p := range providers {
-		resp := providerResponse{
-			ID:          p.ID,
-			Name:        p.Name,
-			DisplayName: p.Name,
-			Enabled:     p.Enabled,
-			LastRun:     p.LastRun,
-			LastError:   p.LastError,
-		}
-
-		// registry에서 display_name, auth_method, enabled 상태 보강
-		if s.registry != nil {
-			if rp, ok := s.registry.Get(p.Name); ok {
-				resp.DisplayName = rp.DisplayName()
-				resp.AuthMethod = string(rp.AuthMethod())
-				resp.Enabled = s.registry.IsEnabled(p.Name)
-			}
-		}
-
-		result = append(result, resp)
-	}
-
-	s.jsonResponse(w, map[string]interface{}{
-		"providers": result,
-	})
 }
 
 // handleProviderAction handles /api/providers/{name}/enable and /api/providers/{name}/disable
@@ -627,21 +483,7 @@ func (s *Server) Start(ctx context.Context) error {
 	return nil
 }
 
-// metricLabels는 메트릭 키 → 한글 표시 레이블 매핑 (읽기 전용, 동시 접근 안전)
-var metricLabels = map[string]string{
-	"session":              "세션 (5h)",
-	"weekly":               "주간 (7d)",
-	"weekly_sonnet":        "주간 Sonnet",
-	"extra_credits":        "Extra 크레딧",
-	"credits":              "크레딧",
-	"premium_interactions": "프리미엄 사용량",
-	"chat":                 "채팅",
-}
-
 // metricLabel은 메트릭 키를 한글 표시 레이블로 변환합니다
 func metricLabel(metric string) string {
-	if label, ok := metricLabels[metric]; ok {
-		return label
-	}
-	return metric
+	return domain.MetricLabel(metric)
 }
