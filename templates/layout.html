@@ -758,14 +758,13 @@
                 <div class="pulse-dot"></div>
                 <span>Live</span>
                 <span class="last-update" id="lastUpdateTime"></span>
+                <!-- Mobile: Hamburger Menu -->
+                <button id="mobileMenuBtn" class="btn mobile-only" onclick="toggleDrawer()" style="font-size: 1.5rem; padding: 0.25rem 0.5rem; background: transparent; border: none; color: var(--text-primary); margin-left: 0.5rem;">
+                    ☰
+                </button>
             </div>
         </div>
     </header>
-    
-    <!-- Mobile: Hamburger Menu -->
-    <button id="mobileMenuBtn" class="btn mobile-only" onclick="toggleDrawer()" style="font-size: 1.5rem; padding: 0.5rem; background: transparent; border: none;">
-        ☰
-    </button>
     
     <!-- Desktop: Floating Action Button (FAB) -->
     <button id="fabSettingsBtn" class="fab-button desktop-only" onclick="toggleDrawer()" title="설정">
@@ -907,7 +906,7 @@
         // Load providers for drawer
         async function loadDrawerProviders() {
             try {
-                const resp = await fetch('/api/v1/providers');
+                const resp = await fetch('/api/providers');
                 if (!resp.ok) throw new Error('providers API 실패');
                 const data = await resp.json();
                 renderDrawerProviders(data.providers || []);
@@ -949,7 +948,7 @@
             const btn = document.getElementById(`drawer-btn-${name}`);
             if (btn) { btn.disabled = true; btn.textContent = '처리 중...'; }
             try {
-                const resp = await fetch(`/api/v1/providers/${name}/${action}`, { method: 'POST' });
+                const resp = await fetch(`/api/providers/${name}/${action}`, { method: 'POST' });
                 const data = await resp.json();
                 if (!resp.ok) {
                     alert(`${action === 'enable' ? '활성화' : '비활성화'} 실패: ${data.error}`);

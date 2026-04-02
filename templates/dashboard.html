@@ -84,7 +84,7 @@ async function refreshAll() {
 // Provider 관리 UI
 async function loadProviderManagement() {
     try {
-        const resp = await fetch('/api/v1/providers');
+        const resp = await fetch('/api/providers');
         if (!resp.ok) throw new Error('providers API 실패');
         const data = await resp.json();
         renderProviderManagement(data.providers || []);
@@ -129,7 +129,7 @@ async function toggleProvider(name, action) {
     const btn = document.getElementById(`pm-btn-${name}`);
     if (btn) { btn.disabled = true; btn.textContent = '처리 중...'; }
     try {
-        const resp = await fetch(`/api/v1/providers/${name}/${action}`, { method: 'POST' });
+        const resp = await fetch(`/api/providers/${name}/${action}`, { method: 'POST' });
         const data = await resp.json();
         if (!resp.ok) {
             alert(`${action === 'enable' ? '활성화' : '비활성화'} 실패: ${data.error}`);
@@ -208,9 +208,9 @@ function startAutoRefresh() {
     if (refreshInterval) clearInterval(refreshInterval);
     refreshInterval = setInterval(async function() {
         try {
-            // /api/v1/current, /healthz 병렬 호출
+            // /api/current, /healthz 병렬 호출
             const [currentResult, healthResult] = await Promise.allSettled([
-                fetch('/api/v1/current').then(r => { if (!r.ok) throw new Error('상태 체크 실패'); return r.json(); }),
+                fetch('/api/current').then(r => { if (!r.ok) throw new Error('상태 체크 실패'); return r.json(); }),
                 fetch('/healthz').then(r => r.json())
             ]);
 
