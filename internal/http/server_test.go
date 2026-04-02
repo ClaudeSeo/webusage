@@ -102,13 +102,14 @@ func TestCurrentUsageEndpoint(t *testing.T) {
 	defer cleanup()
 
 	// Add provider and usage data
-	providerID, _ := server.store.CreateProvider("test-provider", `{}`)
+	providerID, _ := server.store.CreateProvider("claude", `{}`)
+	server.store.EnableProviderByName("claude", true)
 	now := time.Now()
 
 	snapshot := &store.UsageSnapshot{
 		ProviderID:  providerID,
-		Metric:      "tokens",
-		Used:        5000.0,
+		Metric:      "session",
+		Used:        45.0,
 		CollectedAt: now,
 		RawJSON:     `{"test":true}`,
 	}
@@ -128,18 +129,13 @@ func TestCurrentUsageEndpoint(t *testing.T) {
 		t.Fatalf("Failed to parse response: %v", err)
 	}
 
-	testProvider, ok := resp["test-provider"].(map[string]interface{})
+	claudeProvider, ok := resp["claude"].(map[string]interface{})
 	if !ok {
-		t.Fatal("Expected test-provider in response")
+		t.Fatal("Expected claude in response")
 	}
 
-	metrics, ok := testProvider["metrics"].(map[string]interface{})
-	if !ok {
-		t.Fatal("Expected metrics object")
-	}
-
-	if metrics["tokens"] != 5000.0 {
-		t.Errorf("Expected tokens 5000.0, got %v", metrics["tokens"])
+	if claudeProvider["cycle_type"] != "rolling_5h" {
+		t.Errorf("Expected cycle_type 'rolling_5h', got %v", claudeProvider["cycle_type"])
 	}
 }
 
@@ -148,17 +144,19 @@ func TestTrendsEndpoint(t *testing.T) {
 	defer cleanup()
 
 	// Add provider and historical data
-	providerID, _ := server.store.CreateProvider("test-provider", `{}`)
+	providerID, _ := server.store.CreateProvider("claude", `{}`)
+	server.store.EnableProviderByName("claude", true)
 	now := time.Now()
 
 	snapshots := []*store.UsageSnapshot{
-		{ProviderID: providerID, Metric: "tokens", Used: 1000, CollectedAt: now.Add(-2 * time.Hour)},
-		{ProviderID: providerID, Metric: "tokens", Used: 2000, CollectedAt: now.Add(-time.Hour)},
-		{ProviderID: providerID, Metric: "tokens", Used: 3000, CollectedAt: now},
+		{ProviderID: providerID, Metric: "session", Used: 1000, CollectedAt: now.Add(-2 * time.Hour)},
+		{ProviderID: providerID, Metric: "session", Used: 2000, CollectedAt: now.Add(-time.Hour)},
+		{ProviderID: providerID, Metric: "session", Used: 3000, CollectedAt: now},
 	}
 	server.store.CreateUsageSnapshots(snapshots)
 
-	req := httptest.NewRequest(nethttp.MethodGet, "/api/trends?range=24h", nil)
+	// Trends now requires provider_id parameter
+	req := httptest.NewRequest(nethttp.MethodGet, "/api/trends?provider_id=claude", nil)
 	w := httptest.NewRecorder()
 
 	server.mux.ServeHTTP(w, req)
@@ -172,18 +170,12 @@ func TestTrendsEndpoint(t *testing.T) {
 		t.Fatalf("Failed to parse response: %v", err)
 	}
 
-	testProvider, ok := resp["test-provider"].(map[string]interface{})
-	if !ok {
-		t.Fatal("Expected test-provider in response")
+	if resp["provider_id"] != "claude" {
+		t.Error("Expected provider_id 'claude' in response")
 	}
 
-	trend, ok := testProvider["trend"].([]interface{})
-	if !ok {
-		t.Fatal("Expected trend array")
-	}
-
-	if len(trend) != 3 {
-		t.Errorf("Expected 3 trend points, got %d", len(trend))
+	if resp["cycle_type"] != "rolling_5h" {
+		t.Errorf("Expected cycle_type 'rolling_5h', got %v", resp["cycle_type"])
 	}
 }
 
