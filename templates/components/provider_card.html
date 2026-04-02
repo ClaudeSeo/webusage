@@ -107,7 +107,18 @@
 </style>
 <div class="card provider-card-inner" data-provider-id="{{.ID}}" data-metrics='{{range $i, $m := .Metrics}}{{if $i}},{{end}}{"label":"{{$m.Label}}","used":{{$m.Used}},"limit":{{$m.Limit}}}{{end}}'>
     <div class="card-header">
-        <h3 class="card-title" style="font-size: 1.125rem; font-weight: 600;">{{.Name}}</h3>
+        <h3 class="card-title" style="font-size: 1.125rem; font-weight: 600;">
+            {{.Name}}
+            {{if eq .CycleType "rolling_5h"}}
+                <span style="font-size: 0.75rem; background: var(--bg-hover); padding: 2px 6px; border-radius: 4px; margin-left: 6px; color: var(--text-secondary); font-weight: 500;">5h</span>
+            {{else if eq .CycleType "daily"}}
+                <span style="font-size: 0.75rem; background: var(--bg-hover); padding: 2px 6px; border-radius: 4px; margin-left: 6px; color: var(--text-secondary); font-weight: 500;">Day</span>
+            {{else if eq .CycleType "weekly"}}
+                <span style="font-size: 0.75rem; background: var(--bg-hover); padding: 2px 6px; border-radius: 4px; margin-left: 6px; color: var(--text-secondary); font-weight: 500;">Week</span>
+            {{else if eq .CycleType "monthly"}}
+                <span style="font-size: 0.75rem; background: var(--bg-hover); padding: 2px 6px; border-radius: 4px; margin-left: 6px; color: var(--text-secondary); font-weight: 500;">Month</span>
+            {{end}}
+        </h3>
         {{if .LastError}}
             <span class="card-status status-error">🔴 에러</span>
         {{else if isStale .CollectedAt}}
@@ -116,6 +127,13 @@
             <span class="card-status status-ok">✅ 정상</span>
         {{end}}
     </div>
+    
+    {{if .TimeRemaining}}
+    <div style="margin-bottom: 1rem; font-size: 0.8rem; color: var(--text-secondary); display: flex; justify-content: space-between; align-items: center;">
+        <span>{{if not .CycleStartAt.IsZero}}{{formatDateTime .CycleStartAt}}{{end}} ~ {{if not .CycleEndAt.IsZero}}{{formatDateTime .CycleEndAt}}{{end}}</span>
+        <span>⏳ {{.TimeRemaining}}</span>
+    </div>
+    {{end}}
 
     <div class="metrics-container">
         {{if .Metrics}}
@@ -145,6 +163,22 @@
             </div>
         {{end}}
     </div>
+
+    {{if .CurrentPace}}
+    <div class="metric-row" style="margin-top: 0.5rem; font-size: 0.75rem; color: var(--text-muted); background: var(--bg-primary); padding: 0.5rem; border-radius: 4px;">
+        <div style="display: flex; justify-content: space-between; width: 100%; margin-bottom: 0.25rem;">
+            <span>현재 속도</span>
+            <span>{{formatNumber .CurrentPace}}/h</span>
+        </div>
+        <div style="display: flex; justify-content: space-between; width: 100%;">
+            <span>평균 대비</span>
+            <span style="{{if gt .PaceRatio 1.2}}color: var(--accent-red);{{else if gt .PaceRatio 0.8}}color: var(--accent-yellow);{{else}}color: var(--accent-green);{{end}}">{{formatNumber (mulf .PaceRatio 100)}}%</span>
+        </div>
+        {{if .WillExceedBeforeReset}}
+            <div style="margin-top: 0.5rem; color: var(--accent-red); font-weight: bold; text-align: center;">⚠️ 리셋 전 한도 초과 예상</div>
+        {{end}}
+    </div>
+    {{end}}
 
     <div class="metric-row" style="margin-top: 0.5rem;">
         <span class="metric-label-text">마지막 수집</span>

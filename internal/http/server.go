@@ -192,13 +192,22 @@ func (s *Server) handleDashboard(w nethttp.ResponseWriter, r *nethttp.Request) {
 	}
 
 	type ProviderView struct {
-		ID          int64
-		Name        string
-		Enabled     bool
-		Metrics     []MetricView
-		CollectedAt time.Time
-		UpdatedAt   time.Time
-		LastError   *string
+		ID                    int64
+		Name                  string
+		Enabled               bool
+		Metrics               []MetricView
+		CollectedAt           time.Time
+		UpdatedAt             time.Time
+		LastError             *string
+		CycleType             string
+		LimitType             string
+		CycleStartAt          time.Time
+		CycleEndAt            time.Time
+		TimeRemaining         string
+		WillExceedBeforeReset bool
+		CurrentPace           float64
+		BaselinePace          float64
+		PaceRatio             float64
 	}
 
 	var views []ProviderView
@@ -211,9 +220,38 @@ func (s *Server) handleDashboard(w nethttp.ResponseWriter, r *nethttp.Request) {
 			LastError: p.LastError,
 		}
 
-		// 최신 메트릭을 개별 MetricView로 변환
+		// Cycle-Aware API 정보와 병합
+		cycleConfig := getProviderCycleConfig(p.Name)
+		view.CycleType = string(cycleConfig.CycleType)
+		view.LimitType = string(cycleConfig.LimitType)
+
 		snapshots, err := s.store.GetLatestUsageByProvider(p.ID)
 		if err == nil && len(snapshots) > 0 {
+			now := time.Now()
+			
+			// 기본 스냅샷 (첫 번째 메트릭 기준)
+			primarySnapshot := snapshots[0]
+			for _, snap := range snapshots {
+				if cycleConfig.CycleType == CycleTypeRolling5h && snap.Metric == "session" {
+					primarySnapshot = snap
+					break
+				}
+				if cycleConfig.CycleType == CycleTypeMonthly && (snap.Metric == "premium_interactions" || snap.Metric == "chat") {
+					primarySnapshot = snap
+					break
+				}
+			}
+			
+			cycleStart, cycleEnd := calculateCycleBoundaries(cycleConfig.CycleType, now, primarySnapshot.ResetAt)
+			if cycleStart != nil {
+				view.CycleStartAt = *cycleStart
+			}
+			if cycleEnd != nil {
+				view.CycleEndAt = *cycleEnd
+				view.TimeRemaining = formatDuration(cycleEnd.Sub(now))
+			}
+			
+			// 메트릭 처리
 			for _, snap := range snapshots {
 				mv := MetricView{
 					Name:  snap.Metric,

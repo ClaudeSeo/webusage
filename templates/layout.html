@@ -832,7 +832,7 @@
         // Load providers for drawer
         async function loadDrawerProviders() {
             try {
-                const resp = await fetch('/api/providers');
+                const resp = await fetch('/api/v1/providers');
                 if (!resp.ok) throw new Error('providers API 실패');
                 const data = await resp.json();
                 renderDrawerProviders(data.providers || []);
@@ -874,7 +874,7 @@
             const btn = document.getElementById(`drawer-btn-${name}`);
             if (btn) { btn.disabled = true; btn.textContent = '처리 중...'; }
             try {
-                const resp = await fetch(`/api/providers/${name}/${action}`, { method: 'POST' });
+                const resp = await fetch(`/api/v1/providers/${name}/${action}`, { method: 'POST' });
                 const data = await resp.json();
                 if (!resp.ok) {
                     alert(`${action === 'enable' ? '활성화' : '비활성화'} 실패: ${data.error}`);
