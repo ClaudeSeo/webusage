@@ -75,46 +75,96 @@
             }
         }
         
+        /* Vercel-style sticky glass header */
         header {
-            background: linear-gradient(180deg, var(--bg-secondary) 0%, transparent 100%);
-            border-bottom: 1px solid var(--border-color);
-            padding: 1.5rem 0;
-            margin-bottom: 2rem;
+            position: sticky;
+            top: 0;
+            z-index: 50;
+            background: rgba(0, 0, 0, 0.6);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+            height: 3.5rem;
+            display: flex;
+            align-items: center;
+            padding: 0 1.5rem;
         }
 
         @media (max-width: 640px) {
             header {
-                padding: 1rem 0;
-                margin-bottom: 1rem;
+                padding: 0 1rem;
             }
         }
         
-        header h1 {
-            font-size: 1.75rem;
-            font-weight: 700;
+        header .nav-container {
+            max-width: 1400px;
+            width: 100%;
+            margin: 0 auto;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+        
+        /* Breadcrumb navigation - Vercel style */
+        header .breadcrumb {
+            display: flex;
+            align-items: center;
+            font-size: 0.875rem;
+            font-weight: 500;
+            color: var(--text-secondary);
+        }
+        
+        header .breadcrumb .logo-icon {
             color: var(--text-primary);
+            margin-right: 0.5rem;
+        }
+        
+        header .breadcrumb .separator {
+            color: var(--text-muted);
+            margin: 0 0.5rem;
+        }
+        
+        header .breadcrumb .segment {
+            color: var(--text-secondary);
+            transition: color var(--transition-fast);
+        }
+        
+        header .breadcrumb .segment:hover {
+            color: var(--text-primary);
+        }
+        
+        header .breadcrumb .segment.active {
+            color: var(--text-primary);
+        }
+        
+        /* Live status badge */
+        header .live-status {
             display: flex;
             align-items: center;
             gap: 0.5rem;
-            word-break: keep-all;
+            font-size: 0.75rem;
+            color: var(--text-secondary);
         }
-
-        @media (max-width: 640px) {
-            header h1 {
-                font-size: 1.25rem;
+        
+        header .live-status .pulse-dot {
+            width: 0.5rem;
+            height: 0.5rem;
+            border-radius: 50%;
+            background: var(--accent-green);
+            animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+        }
+        
+        @keyframes pulse {
+            0%, 100% {
+                opacity: 1;
+            }
+            50% {
+                opacity: 0.5;
             }
         }
         
-        header .subtitle {
-            color: var(--text-secondary);
-            font-size: 0.875rem;
-            margin-top: 0.25rem;
-        }
-
-        @media (max-width: 640px) {
-            header .subtitle {
-                font-size: 0.75rem;
-            }
+        header .live-status .last-update {
+            color: var(--text-muted);
         }
         
         /* Dashboard grid with animation */
@@ -693,17 +743,29 @@
 </head>
 <body>
     <header>
-        <div class="container" style="display: flex; justify-content: space-between; align-items: center;">
-            <div>
-                <h1>📊 AI 사용량 관제 대시보드</h1>
-                <p class="subtitle">실시간 API 사용량 모니터링</p>
+        <div class="nav-container">
+            <!-- Breadcrumb Navigation -->
+            <nav class="breadcrumb">
+                <span class="logo-icon">▲</span>
+                <span class="separator">/</span>
+                <a href="/" class="segment">webusage</a>
+                <span class="separator">/</span>
+                <span class="segment active">Usage Dashboard</span>
+            </nav>
+            
+            <!-- Live Status Badge -->
+            <div class="live-status">
+                <div class="pulse-dot"></div>
+                <span>Live</span>
+                <span class="last-update" id="lastUpdateTime"></span>
             </div>
-            <!-- Mobile: Hamburger Menu -->
-            <button id="mobileMenuBtn" class="btn mobile-only" onclick="toggleDrawer()" style="font-size: 1.5rem; padding: 0.5rem; background: transparent; border: none;">
-                ☰
-            </button>
         </div>
     </header>
+    
+    <!-- Mobile: Hamburger Menu -->
+    <button id="mobileMenuBtn" class="btn mobile-only" onclick="toggleDrawer()" style="font-size: 1.5rem; padding: 0.5rem; background: transparent; border: none;">
+        ☰
+    </button>
     
     <!-- Desktop: Floating Action Button (FAB) -->
     <button id="fabSettingsBtn" class="fab-button desktop-only" onclick="toggleDrawer()" title="설정">
@@ -827,7 +889,20 @@
         // Initialize gauge mode on load
         document.addEventListener('DOMContentLoaded', function() {
             setGaugeMode(gaugeMode);
+            updateLastUpdateTime();
+            setInterval(updateLastUpdateTime, 60000); // Update every minute
         });
+        
+        // Update last update time display
+        function updateLastUpdateTime() {
+            const el = document.getElementById('lastUpdateTime');
+            if (el) {
+                const now = new Date();
+                const hours = now.getHours().toString().padStart(2, '0');
+                const minutes = now.getMinutes().toString().padStart(2, '0');
+                el.textContent = `${hours}:${minutes}`;
+            }
+        }
         
         // Load providers for drawer
         async function loadDrawerProviders() {
