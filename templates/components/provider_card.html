@@ -1,0 +1,275 @@
+{{define "providerCard"}}
+<style>
+.provider-card-inner {
+    animation: fadeInUp 0.4s ease backwards;
+    padding: 1.5rem;
+}
+
+@media (max-width: 640px) {
+    .provider-card-inner {
+        padding: 1rem;
+    }
+}
+
+.provider-card-error {
+    margin-top: 1rem;
+    padding: 0.75rem;
+    background: rgba(238, 0, 0, 0.1);
+    border-radius: var(--radius-md);
+    border-left: 3px solid #E00;
+}
+
+.provider-card-error-title {
+    font-size: 0.75rem;
+    color: #E00;
+    font-weight: 600;
+}
+
+.provider-card-error-message {
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+    margin-top: 0.25rem;
+}
+
+.provider-card-stale {
+    margin-top: 1rem;
+    padding: 0.75rem;
+    background: rgba(245, 166, 35, 0.1);
+    border-radius: var(--radius-md);
+    border-left: 3px solid #F5A623;
+}
+
+.provider-card-stale-title {
+    font-size: 0.75rem;
+    color: #F5A623;
+    font-weight: 600;
+}
+
+.provider-card-stale-message {
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+    margin-top: 0.25rem;
+}
+
+.metric-section {
+    margin-bottom: 1rem;
+}
+
+.metric-info {
+    display: flex;
+    justify-content: space-between;
+    margin-top: 0.25rem;
+    font-size: 0.75rem;
+    color: var(--text-muted);
+}
+
+.metric-reset {
+    color: var(--text-muted);
+}
+
+/* Progress bar - fully rounded with smooth animation */
+.progress-bar-wrapper {
+    margin-top: 0.75rem;
+    background: var(--bg-card);
+    border-radius: var(--radius-full);
+    height: 10px;
+    overflow: hidden;
+}
+
+.progress-bar-inner {
+    height: 100%;
+    border-radius: var(--radius-full);
+    transition: width 0.5s ease-out, background 0.3s ease;
+}
+
+.progress-bar-inner.safe {
+    background: linear-gradient(90deg, var(--accent-green), var(--accent-green-hover));
+}
+
+.progress-bar-inner.warning {
+    background: linear-gradient(90deg, var(--accent-yellow), var(--accent-yellow-hover));
+}
+
+.progress-bar-inner.danger {
+    background: linear-gradient(90deg, var(--accent-red), var(--accent-red-hover));
+}
+
+.metric-label-text {
+    font-size: 0.875rem;
+    color: var(--text-secondary);
+}
+
+.metric-value-text {
+    font-weight: 600;
+    color: var(--text-primary);
+    font-size: 0.875rem;
+}
+</style>
+<div class="card provider-card-inner" data-provider-id="{{.ID}}" data-metrics='{{range $i, $m := .Metrics}}{{if $i}},{{end}}{"label":"{{$m.Label}}","used":{{$m.Used}},"limit":{{$m.Limit}}}{{end}}'>
+    <div class="card-header">
+        <h3 class="card-title" style="font-size: 1.125rem; font-weight: 600;">
+            {{.Name}}
+            {{if eq .CycleType "rolling_5h"}}
+                <span style="font-size: 0.75rem; background: var(--bg-hover); padding: 2px 6px; border-radius: 4px; margin-left: 6px; color: var(--text-secondary); font-weight: 500;">5h</span>
+            {{else if eq .CycleType "daily"}}
+                <span style="font-size: 0.75rem; background: var(--bg-hover); padding: 2px 6px; border-radius: 4px; margin-left: 6px; color: var(--text-secondary); font-weight: 500;">Day</span>
+            {{else if eq .CycleType "weekly"}}
+                <span style="font-size: 0.75rem; background: var(--bg-hover); padding: 2px 6px; border-radius: 4px; margin-left: 6px; color: var(--text-secondary); font-weight: 500;">Week</span>
+            {{else if eq .CycleType "monthly"}}
+                <span style="font-size: 0.75rem; background: var(--bg-hover); padding: 2px 6px; border-radius: 4px; margin-left: 6px; color: var(--text-secondary); font-weight: 500;">Month</span>
+            {{end}}
+        </h3>
+        {{if .LastError}}
+            <span class="card-status status-error">🔴 에러</span>
+        {{else if isStale .CollectedAt}}
+            <span class="card-status status-warning">⚠️ 오래됨</span>
+        {{else}}
+            <span class="card-status status-ok">✅ 정상</span>
+        {{end}}
+    </div>
+    
+    {{if .TimeRemaining}}
+    <div style="margin-bottom: 1rem; font-size: 0.8rem; color: var(--text-secondary); display: flex; justify-content: space-between; align-items: center;">
+        <span>{{if not .CycleStartAt.IsZero}}{{formatDateTime .CycleStartAt}}{{end}} ~ {{if not .CycleEndAt.IsZero}}{{formatDateTime .CycleEndAt}}{{end}}</span>
+        <span>⏳ {{.TimeRemaining}}</span>
+    </div>
+    {{end}}
+
+    <div class="metrics-container">
+        {{if .Metrics}}
+            {{range .Metrics}}
+            <div class="metric-section" data-used="{{.Used}}" data-limit="{{.Limit}}" data-label="{{.Label}}">
+                <div class="metric-row">
+                    <span class="metric-label-text">{{.Label}}</span>
+                    <span class="metric-value-text metric-display">-</span>
+                </div>
+
+                <div class="progress-bar-wrapper">
+                    <div class="progress-bar-inner metric-progress safe"
+                         style="width: 0%"></div>
+                </div>
+
+                <div class="metric-info">
+                    <span class="metric-percent">-</span>
+                    {{if not .ResetAt.IsZero}}
+                    <span class="metric-reset">리셋: {{formatDateTime .ResetAt}}</span>
+                    {{end}}
+                </div>
+            </div>
+            {{end}}
+        {{else}}
+            <div style="padding: 1.5rem 0; color: var(--text-muted); font-size: 0.875rem; text-align: center;">
+                수집된 데이터 없음
+            </div>
+        {{end}}
+    </div>
+
+    {{if .CurrentPace}}
+    <div class="metric-row" style="margin-top: 0.5rem; font-size: 0.75rem; color: var(--text-muted); background: var(--bg-primary); padding: 0.5rem; border-radius: 4px;">
+        <div style="display: flex; justify-content: space-between; width: 100%; margin-bottom: 0.25rem;">
+            <span>현재 속도</span>
+            <span>{{formatNumber .CurrentPace}}/h</span>
+        </div>
+        <div style="display: flex; justify-content: space-between; width: 100%;">
+            <span>평균 대비</span>
+            <span style="{{if gt .PaceRatio 1.2}}color: var(--accent-red);{{else if gt .PaceRatio 0.8}}color: var(--accent-yellow);{{else}}color: var(--accent-green);{{end}}">{{formatNumber (mulf .PaceRatio 100)}}%</span>
+        </div>
+        {{if .WillExceedBeforeReset}}
+            <div style="margin-top: 0.5rem; color: var(--accent-red); font-weight: bold; text-align: center;">⚠️ 리셋 전 한도 초과 예상</div>
+        {{end}}
+    </div>
+    {{end}}
+
+    <div class="metric-row" style="margin-top: 0.5rem;">
+        <span class="metric-label-text">마지막 수집</span>
+        <span class="metric-value-text">{{formatDateTime .CollectedAt}}</span>
+    </div>
+
+    {{if .LastError}}
+        <div class="provider-card-error">
+            <p class="provider-card-error-title">⚠️ 수집 실패</p>
+            <p class="provider-card-error-message">{{.LastError}}</p>
+        </div>
+    {{else if isStale .CollectedAt}}
+        <div class="provider-card-stale">
+            <p class="provider-card-stale-title">🕐 데이터 오래됨</p>
+            <p class="provider-card-stale-message">마지막 수집: {{formatDateTime .CollectedAt}}</p>
+        </div>
+    {{end}}
+
+    <div class="timestamp">
+        {{if isStale .CollectedAt}}
+            ⚠️ 오래됨:
+        {{end}}
+        업데이트: {{formatDateTime .UpdatedAt}}
+    </div>
+</div>
+
+<script>
+(function() {
+    function updateMetricDisplay() {
+        const mode = localStorage.getItem('gaugeMode') || 'left';
+        const card = document.querySelector('[data-provider-id="{{.ID}}"]');
+        if (!card) return;
+        
+        const metrics = card.querySelectorAll('.metric-section');
+        metrics.forEach(metric => {
+            const used = parseFloat(metric.dataset.used);
+            const limit = parseFloat(metric.dataset.limit);
+            
+            const display = metric.querySelector('.metric-display');
+            const percentEl = metric.querySelector('.metric-percent');
+            const progress = metric.querySelector('.metric-progress');
+            
+            let displayValue, percentValue, progressWidth, colorClass;
+            
+            if (mode === 'left') {
+                const remaining = Math.max(0, limit - used);
+                const remainingPercent = limit > 0 ? (remaining / limit) * 100 : 0;
+                displayValue = remaining.toFixed(1) + ' / ' + new Intl.NumberFormat('ko-KR').format(limit);
+                percentValue = remainingPercent.toFixed(1) + '% 남음';
+                progressWidth = remainingPercent;
+                
+                // Color based on remaining (low remaining = danger)
+                if (remainingPercent < 20) {
+                    colorClass = 'danger';
+                } else if (remainingPercent < 50) {
+                    colorClass = 'warning';
+                } else {
+                    colorClass = 'safe';
+                }
+            } else {
+                const usagePercent = limit > 0 ? (used / limit) * 100 : 0;
+                displayValue = used.toFixed(1) + ' / ' + new Intl.NumberFormat('ko-KR').format(limit);
+                percentValue = usagePercent.toFixed(1) + '% 사용';
+                progressWidth = usagePercent;
+                
+                // Color based on usage (high usage = danger)
+                if (usagePercent >= 80) {
+                    colorClass = 'danger';
+                } else if (usagePercent >= 50) {
+                    colorClass = 'warning';
+                } else {
+                    colorClass = 'safe';
+                }
+            }
+            
+            display.textContent = displayValue;
+            percentEl.textContent = percentValue;
+            
+            progress.classList.remove('safe', 'warning', 'danger');
+            progress.classList.add(colorClass);
+            progress.style.width = progressWidth + '%';
+        });
+    }
+    
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', updateMetricDisplay);
+    } else {
+        updateMetricDisplay();
+    }
+    
+    window.addEventListener('gaugeModeChanged', updateMetricDisplay);
+})();
+</script>
+{{end}}
