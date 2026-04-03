@@ -109,7 +109,12 @@ func (s *Server) loadTemplates() error {
 			if t.IsZero() {
 				return "-"
 			}
-			return t.Format("1/2 15:04")
+			// KST(Asia/Seoul)로 변환하여 표시
+			kst, err := time.LoadLocation("Asia/Seoul")
+			if err != nil {
+				return t.Format("1/2 15:04")
+			}
+			return t.In(kst).Format("1/2 15:04")
 		},
 		"getUsageClass": func(percentage float64) string {
 			if percentage < 50 {
