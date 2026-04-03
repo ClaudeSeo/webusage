@@ -236,6 +236,80 @@ func TestCycleAware_Trends_NoProviderID(t *testing.T) {
 	}
 }
 
+func TestCycleAware_Trends_AllProvidersRangeWindow(t *testing.T) {
+	server, cleanup := setupTestServerForCycle(t)
+	defer cleanup()
+
+	claudeID, _ := server.store.CreateProvider("claude", `{}`)
+	now := time.Now()
+
+	snapshots := []*store.UsageSnapshot{
+		{
+			ProviderID:  claudeID,
+			Metric:      "session",
+			Used:        10.0,
+			CollectedAt: now.Add(-20 * 24 * time.Hour),
+		},
+		{
+			ProviderID:  claudeID,
+			Metric:      "session",
+			Used:        20.0,
+			CollectedAt: now.Add(-3 * 24 * time.Hour),
+		},
+		{
+			ProviderID:  claudeID,
+			Metric:      "session",
+			Used:        30.0,
+			CollectedAt: now.Add(-2 * time.Hour),
+		},
+	}
+
+	for _, snapshot := range snapshots {
+		server.store.CreateUsageSnapshot(snapshot)
+	}
+
+	type providerTrend struct {
+		Trend []domain.TrendDataPoint `json:"trend"`
+	}
+
+	testCases := []struct {
+		name        string
+		query       string
+		expectCount int
+	}{
+		{name: "24h range", query: "/api/trends?range=24h", expectCount: 1},
+		{name: "7d range", query: "/api/trends?range=7d", expectCount: 2},
+		{name: "30d range", query: "/api/trends?range=30d", expectCount: 3},
+		{name: "view fallback", query: "/api/trends?view=7d", expectCount: 2},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, tc.query, nil)
+			w := httptest.NewRecorder()
+
+			server.mux.ServeHTTP(w, req)
+
+			if w.Code != http.StatusOK {
+				t.Fatalf("Expected status 200, got %d", w.Code)
+			}
+
+			var resp map[string]providerTrend
+			if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+				t.Fatalf("Failed to parse response: %v", err)
+			}
+
+			claudeTrend, ok := resp["claude"]
+			if !ok {
+				t.Fatal("Expected 'claude' in response")
+			}
+			if len(claudeTrend.Trend) != tc.expectCount {
+				t.Fatalf("Expected %d trend points, got %d", tc.expectCount, len(claudeTrend.Trend))
+			}
+		})
+	}
+}
+
 // TestCycleAware_Forecast validates the /api/forecast endpoint
 func TestCycleAware_Forecast(t *testing.T) {
 	server, cleanup := setupTestServerForCycle(t)

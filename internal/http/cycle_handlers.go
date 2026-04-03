@@ -174,7 +174,7 @@ func (s *Server) handleAPICurrent(w nethttp.ResponseWriter, r *nethttp.Request) 
 			"usage_percent":            0.0,
 			"will_exceed_before_reset": false,
 			"current_pace":             0.0,
-			"baseline_pace":             0.0,
+			"baseline_pace":            0.0,
 			"pace_vs_baseline_ratio":   0.0,
 		}
 
@@ -240,8 +240,8 @@ func (s *Server) handleAPICurrent(w nethttp.ResponseWriter, r *nethttp.Request) 
 }
 
 // handleAPITrends returns cycle-aware trend data
-// GET /api/trends?provider_id=&view=&mode=&bucket=
-// provider_id 없으면 모든 활성 provider의 trend 데이터 반환
+// GET /api/trends?provider_id=&range=&view=&mode=&bucket=
+// provider_id 없으면 모든 활성 provider의 trend 데이터를 range 기준으로 반환
 func (s *Server) handleAPITrends(w nethttp.ResponseWriter, r *nethttp.Request) {
 	if r.Method != nethttp.MethodGet {
 		nethttp.Error(w, "Method not allowed", nethttp.StatusMethodNotAllowed)
@@ -249,6 +249,7 @@ func (s *Server) handleAPITrends(w nethttp.ResponseWriter, r *nethttp.Request) {
 	}
 
 	providerID := r.URL.Query().Get("provider_id")
+	rangeValue := r.URL.Query().Get("range")
 	view := r.URL.Query().Get("view")
 	if view == "" {
 		view = "current"
@@ -264,7 +265,7 @@ func (s *Server) handleAPITrends(w nethttp.ResponseWriter, r *nethttp.Request) {
 
 	// provider_id 없으면 모든 활성 provider 반환
 	if providerID == "" {
-		s.handleAllProvidersTrends(w, r, view, mode, bucket)
+		s.handleAllProvidersTrends(w, r, rangeValue, view, mode, bucket)
 		return
 	}
 
@@ -427,12 +428,12 @@ func (s *Server) handleAPIForecast(w nethttp.ResponseWriter, r *nethttp.Request)
 		}
 
 		forecast := map[string]interface{}{
-			"provider_id":   p.Name,
-			"cycle_type":    string(cycleConfig.CycleType),
-			"current_usage": primarySnapshot.Used,
-			"cycle_end":     cycleEnd,
+			"provider_id":    p.Name,
+			"cycle_type":     string(cycleConfig.CycleType),
+			"current_usage":  primarySnapshot.Used,
+			"cycle_end":      cycleEnd,
 			"time_remaining": domain.FormatDuration(cycleEnd.Sub(now)),
-			"confidence":    0.8, // Default confidence
+			"confidence":     0.8, // Default confidence
 		}
 
 		if primarySnapshot.Limit != nil && *primarySnapshot.Limit > 0 {
@@ -506,15 +507,15 @@ func (s *Server) handleAPIProvidersMeta(w nethttp.ResponseWriter, r *nethttp.Req
 	}
 
 	type ProviderMeta struct {
-		ProviderID      string   `json:"provider_id"`
-		DisplayName     string   `json:"display_name"`
-		AuthMethod      string   `json:"auth_method"`
-		Enabled         bool     `json:"enabled"`
-		CycleType       string   `json:"cycle_type"`
-		LimitType       string   `json:"limit_type"`
-		Metrics         []string `json:"metrics"`
-		SupportedViews  []string `json:"supported_views"`
-		SupportedModes  []string `json:"supported_modes"`
+		ProviderID       string   `json:"provider_id"`
+		DisplayName      string   `json:"display_name"`
+		AuthMethod       string   `json:"auth_method"`
+		Enabled          bool     `json:"enabled"`
+		CycleType        string   `json:"cycle_type"`
+		LimitType        string   `json:"limit_type"`
+		Metrics          []string `json:"metrics"`
+		SupportedViews   []string `json:"supported_views"`
+		SupportedModes   []string `json:"supported_modes"`
 		SupportedBuckets []string `json:"supported_buckets"`
 	}
 
@@ -524,13 +525,13 @@ func (s *Server) handleAPIProvidersMeta(w nethttp.ResponseWriter, r *nethttp.Req
 		cycleConfig := domain.GetProviderCycleConfig(p.Name)
 
 		meta := ProviderMeta{
-			ProviderID:  p.Name,
-			DisplayName: getDisplayName(p.Name),
-			Enabled:     p.Enabled,
-			CycleType:   string(cycleConfig.CycleType),
-			LimitType:   string(cycleConfig.LimitType),
-			SupportedViews: []string{"current", "previous", "both"},
-			SupportedModes: []string{"absolute", "relative", "rate"},
+			ProviderID:       p.Name,
+			DisplayName:      getDisplayName(p.Name),
+			Enabled:          p.Enabled,
+			CycleType:        string(cycleConfig.CycleType),
+			LimitType:        string(cycleConfig.LimitType),
+			SupportedViews:   []string{"current", "previous", "both"},
+			SupportedModes:   []string{"absolute", "relative", "rate"},
 			SupportedBuckets: []string{"auto", "hour", "day", "cycle"},
 		}
 
@@ -561,8 +562,26 @@ func getDisplayName(name string) string {
 	return name
 }
 
+func resolveAllProvidersTrendWindow(rangeValue, view string, now time.Time) (time.Time, time.Time) {
+	selector := rangeValue
+	if selector == "" {
+		selector = view
+	}
+
+	switch selector {
+	case "7d":
+		return now.Add(-7 * 24 * time.Hour), now
+	case "30d":
+		return now.Add(-30 * 24 * time.Hour), now
+	case "24h", "current":
+		return now.Add(-24 * time.Hour), now
+	default:
+		return now.Add(-24 * time.Hour), now
+	}
+}
+
 // handleAllProvidersTrends returns trend data for all active providers
-func (s *Server) handleAllProvidersTrends(w nethttp.ResponseWriter, r *nethttp.Request, view, mode, bucket string) {
+func (s *Server) handleAllProvidersTrends(w nethttp.ResponseWriter, r *nethttp.Request, rangeValue, view, mode, bucket string) {
 	providers, err := s.store.ListProviders()
 	if err != nil {
 		s.jsonError(w, "Failed to list providers", nethttp.StatusInternalServerError)
@@ -579,22 +598,7 @@ func (s *Server) handleAllProvidersTrends(w nethttp.ResponseWriter, r *nethttp.R
 
 		cycleConfig := domain.GetProviderCycleConfig(p.Name)
 
-		// Determine time range based on view
-		var startTime, endTime time.Time
-		switch view {
-		case "current", "24h":
-			startTime = now.Add(-24 * time.Hour)
-			endTime = now
-		case "7d":
-			startTime = now.Add(-7 * 24 * time.Hour)
-			endTime = now
-		case "30d":
-			startTime = now.Add(-30 * 24 * time.Hour)
-			endTime = now
-		default:
-			startTime = now.Add(-24 * time.Hour)
-			endTime = now
-		}
+		startTime, endTime := resolveAllProvidersTrendWindow(rangeValue, view, now)
 
 		primaryMetric := getPrimaryMetric(cycleConfig.CycleType)
 
@@ -625,11 +629,11 @@ func (s *Server) handleAllProvidersTrends(w nethttp.ResponseWriter, r *nethttp.R
 		}
 
 		result[p.Name] = map[string]interface{}{
-			"display_name":  getDisplayName(p.Name),
-			"cycle_type":    string(cycleConfig.CycleType),
-			"limit_type":    string(cycleConfig.LimitType),
-			"limit":         limit,
-			"trend":         trend,
+			"display_name": getDisplayName(p.Name),
+			"cycle_type":   string(cycleConfig.CycleType),
+			"limit_type":   string(cycleConfig.LimitType),
+			"limit":        limit,
+			"trend":        trend,
 		}
 	}
 
