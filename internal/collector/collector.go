@@ -146,6 +146,11 @@ func (c *Collector) processSnapshot(ctx context.Context, snapshot openusage.Usag
 		"metrics", len(storeSnapshots),
 		"fetchedAt", snapshot.FetchedAt)
 
+	// providers.updated_at 갱신
+	if err := c.store.UpdateProviderStatus(dbProvider.ID, nil); err != nil {
+		c.logger.Warn("Failed to update provider status", "provider", providerName, "error", err)
+	}
+
 	c.updateJobState(providerName, nil)
 }
 
