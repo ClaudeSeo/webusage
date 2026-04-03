@@ -66,21 +66,6 @@
 {{end}}
 
 <script>
-// 새로고침: 모든 enabled provider 즉시 수집 후 페이지 리로드
-async function refreshAll() {
-    const btn = document.getElementById('refreshBtn');
-    btn.disabled = true;
-    btn.textContent = '⏳ 수집 중...';
-    try {
-        await fetch('/api/collect', { method: 'POST' });
-        // 수집 완료 대기 후 페이지 새로고침
-        setTimeout(() => location.reload(), 3000);
-    } catch (e) {
-        btn.textContent = '❌ 실패';
-        setTimeout(() => { btn.textContent = '🔄 새로고침'; btn.disabled = false; }, 2000);
-    }
-}
-
 // Provider 관리 UI
 async function loadProviderManagement() {
     try {

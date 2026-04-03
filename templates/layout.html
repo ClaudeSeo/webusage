@@ -713,7 +713,7 @@
             <span class="site-name">WebUsage</span>
 
             <div class="header-actions">
-                <button class="refresh-btn" onclick="location.reload()" title="새로고침">↻</button>
+                <button id="refreshBtn" class="refresh-btn" onclick="refreshData()" title="새로고침">↻</button>
                 <!-- Mobile: Hamburger Menu -->
                 <button id="mobileMenuBtn" class="btn mobile-only" onclick="toggleDrawer()" style="font-size: 1.5rem; padding: 0.25rem 0.5rem; background: transparent; border: none; color: var(--text-primary);">
                     ☰
@@ -772,6 +772,19 @@
             return ((value / total) * 100).toFixed(1) + '%';
         }
         
+        async function refreshData() {
+            const btn = document.getElementById('refreshBtn');
+            btn.disabled = true;
+            btn.textContent = '⏳';
+            try {
+                await fetch('/api/collect', { method: 'POST' });
+                setTimeout(() => location.reload(), 3000);
+            } catch (e) {
+                btn.textContent = '↻';
+                btn.disabled = false;
+            }
+        }
+
         function formatDateTime(isoString) {
             if (!isoString) return '-';
             const date = new Date(isoString);
