@@ -2,6 +2,7 @@ package stats
 
 import (
 	"fmt"
+	"sort"
 	"time"
 )
 
@@ -162,13 +163,20 @@ func AggregateByHour(values []float64, timestamps []time.Time) ([]float64, []tim
 	}
 
 	// Sort by time
-	for i := 0; i < len(aggTimes)-1; i++ {
-		for j := i + 1; j < len(aggTimes); j++ {
-			if aggTimes[i].After(aggTimes[j]) {
-				aggTimes[i], aggTimes[j] = aggTimes[j], aggTimes[i]
-				aggValues[i], aggValues[j] = aggValues[j], aggValues[i]
-			}
-		}
+	type timeValue struct {
+		t time.Time
+		v float64
+	}
+	pairs := make([]timeValue, len(aggTimes))
+	for i := range aggTimes {
+		pairs[i] = timeValue{aggTimes[i], aggValues[i]}
+	}
+	sort.Slice(pairs, func(i, j int) bool {
+		return pairs[i].t.Before(pairs[j].t)
+	})
+	for i, p := range pairs {
+		aggTimes[i] = p.t
+		aggValues[i] = p.v
 	}
 
 	return aggValues, aggTimes

@@ -3,41 +3,12 @@ package http
 import (
 	"fmt"
 	nethttp "net/http"
-	"strconv"
+	"sort"
 	"time"
 
 	"github.com/ClaudeSeo/webusage/internal/domain"
 	"github.com/ClaudeSeo/webusage/internal/store"
 )
-
-// ============================================================================
-// Helper Functions (using domain package)
-// ============================================================================
-
-// formatDuration wraps domain.FormatDuration for local use
-func formatDuration(d time.Duration) string {
-	return domain.FormatDuration(d)
-}
-
-// calculateCycleBoundaries wraps domain.CalculateCycleBoundaries for local use
-func calculateCycleBoundaries(cycleType domain.CycleType, now time.Time, resetAt *time.Time) (*time.Time, *time.Time) {
-	return domain.CalculateCycleBoundaries(cycleType, now, resetAt)
-}
-
-// calculatePace wraps domain.CalculatePace for local use
-func calculatePace(data []domain.TrendDataPoint) (currentPace, baselinePace, ratio float64) {
-	return domain.CalculatePace(data)
-}
-
-// forecastLimitExceedTime wraps domain.ForecastLimitExceedTime for local use
-func forecastLimitExceedTime(currentUsage float64, limitValue *float64, pace float64, cycleEnd *time.Time) (*time.Time, bool) {
-	return domain.ForecastLimitExceedTime(currentUsage, limitValue, pace, cycleEnd)
-}
-
-// getProviderCycleConfig wraps domain.GetProviderCycleConfig for local use
-func getProviderCycleConfig(providerName string) domain.ProviderCycleConfig {
-	return domain.GetProviderCycleConfig(providerName)
-}
 
 // getBucketSizeForCycle determines the appropriate bucket size based on cycle type
 func getBucketSizeForCycle(cycleType domain.CycleType, requestedBucket string) string {
@@ -59,6 +30,18 @@ func getBucketSizeForCycle(cycleType domain.CycleType, requestedBucket string) s
 	}
 }
 
+// getPrimaryMetric returns the primary metric name for a given cycle type
+func getPrimaryMetric(cycleType domain.CycleType) string {
+	switch cycleType {
+	case domain.CycleTypeRolling5h:
+		return "session"
+	case domain.CycleTypeMonthly:
+		return "premium_interactions"
+	default:
+		return ""
+	}
+}
+
 // aggregateDataByBucket aggregates trend data by bucket size
 func aggregateDataByBucket(data []domain.TrendDataPoint, bucket string) []domain.TrendDataPoint {
 	if len(data) == 0 {
@@ -68,13 +51,9 @@ func aggregateDataByBucket(data []domain.TrendDataPoint, bucket string) []domain
 	// Sort by timestamp
 	sorted := make([]domain.TrendDataPoint, len(data))
 	copy(sorted, data)
-	for i := 0; i < len(sorted)-1; i++ {
-		for j := i + 1; j < len(sorted); j++ {
-			if sorted[i].Timestamp.After(sorted[j].Timestamp) {
-				sorted[i], sorted[j] = sorted[j], sorted[i]
-			}
-		}
-	}
+	sort.Slice(sorted, func(i, j int) bool {
+		return sorted[i].Timestamp.Before(sorted[j].Timestamp)
+	})
 
 	if bucket == "hour" {
 		return aggregateByHour(sorted)
@@ -103,13 +82,9 @@ func aggregateByHour(data []domain.TrendDataPoint) []domain.TrendDataPoint {
 	}
 
 	// Sort
-	for i := 0; i < len(result)-1; i++ {
-		for j := i + 1; j < len(result); j++ {
-			if result[i].Timestamp.After(result[j].Timestamp) {
-				result[i], result[j] = result[j], result[i]
-			}
-		}
-	}
+	sort.Slice(result, func(i, j int) bool {
+		return result[i].Timestamp.Before(result[j].Timestamp)
+	})
 
 	return result
 }
@@ -132,13 +107,9 @@ func aggregateByDay(data []domain.TrendDataPoint) []domain.TrendDataPoint {
 	}
 
 	// Sort
-	for i := 0; i < len(result)-1; i++ {
-		for j := i + 1; j < len(result); j++ {
-			if result[i].Timestamp.After(result[j].Timestamp) {
-				result[i], result[j] = result[j], result[i]
-			}
-		}
-	}
+	sort.Slice(result, func(i, j int) bool {
+		return result[i].Timestamp.Before(result[j].Timestamp)
+	})
 
 	return result
 }
@@ -169,7 +140,7 @@ func (s *Server) handleAPICurrent(w nethttp.ResponseWriter, r *nethttp.Request) 
 			continue
 		}
 
-		cycleConfig := getProviderCycleConfig(p.Name)
+		cycleConfig := domain.GetProviderCycleConfig(p.Name)
 
 		// Get latest snapshots for this provider
 		snapshots, err := s.store.GetLatestUsageByProvider(p.ID)
@@ -178,16 +149,7 @@ func (s *Server) handleAPICurrent(w nethttp.ResponseWriter, r *nethttp.Request) 
 			continue
 		}
 
-		// Determine primary metric based on cycle type
-		var primaryMetric string
-		switch cycleConfig.CycleType {
-		case domain.CycleTypeRolling5h:
-			primaryMetric = "session"
-		case domain.CycleTypeMonthly:
-			primaryMetric = "premium_interactions"
-		default:
-			primaryMetric = ""
-		}
+		primaryMetric := getPrimaryMetric(cycleConfig.CycleType)
 
 		// Find primary metric snapshot
 		var primarySnapshot *store.UsageSnapshot
@@ -224,7 +186,7 @@ func (s *Server) handleAPICurrent(w nethttp.ResponseWriter, r *nethttp.Request) 
 			}
 
 			// Calculate cycle boundaries
-			info["cycle_start"], info["cycle_end"] = calculateCycleBoundaries(
+			info["cycle_start"], info["cycle_end"] = domain.CalculateCycleBoundaries(
 				cycleConfig.CycleType,
 				now,
 				primarySnapshot.ResetAt,
@@ -232,7 +194,7 @@ func (s *Server) handleAPICurrent(w nethttp.ResponseWriter, r *nethttp.Request) 
 
 			// Calculate time remaining
 			if cycleEnd, ok := info["cycle_end"].(*time.Time); ok && cycleEnd != nil {
-				info["time_remaining"] = formatDuration(cycleEnd.Sub(now))
+				info["time_remaining"] = domain.FormatDuration(cycleEnd.Sub(now))
 			}
 
 			// Get trend data for pace calculation
@@ -251,7 +213,7 @@ func (s *Server) handleAPICurrent(w nethttp.ResponseWriter, r *nethttp.Request) 
 							Metric:    td.Metric,
 						}
 					}
-					info["current_pace"], info["baseline_pace"], info["pace_vs_baseline_ratio"] = calculatePace(points)
+					info["current_pace"], info["baseline_pace"], info["pace_vs_baseline_ratio"] = domain.CalculatePace(points)
 				}
 			}
 
@@ -260,7 +222,7 @@ func (s *Server) handleAPICurrent(w nethttp.ResponseWriter, r *nethttp.Request) 
 			limitValue, _ := info["limit_value"].(*float64)
 			cycleEnd, _ := info["cycle_end"].(*time.Time)
 			if currentPace > 0 && limitValue != nil && cycleEnd != nil {
-				info["forecast_limit_at"], info["will_exceed_before_reset"] = forecastLimitExceedTime(
+				info["forecast_limit_at"], info["will_exceed_before_reset"] = domain.ForecastLimitExceedTime(
 					primarySnapshot.Used,
 					limitValue,
 					currentPace,
@@ -313,12 +275,12 @@ func (s *Server) handleAPITrends(w nethttp.ResponseWriter, r *nethttp.Request) {
 		return
 	}
 
-	cycleConfig := getProviderCycleConfig(p.Name)
+	cycleConfig := domain.GetProviderCycleConfig(p.Name)
 	now := time.Now()
 
 	// Calculate time range based on view
 	var startTime, endTime time.Time
-	cycleStart, cycleEnd := calculateCycleBoundaries(cycleConfig.CycleType, now, nil)
+	cycleStart, cycleEnd := domain.CalculateCycleBoundaries(cycleConfig.CycleType, now, nil)
 
 	switch view {
 	case "current":
@@ -350,16 +312,7 @@ func (s *Server) handleAPITrends(w nethttp.ResponseWriter, r *nethttp.Request) {
 		endTime = now
 	}
 
-	// Determine primary metric based on cycle type
-	var primaryMetric string
-	switch cycleConfig.CycleType {
-	case domain.CycleTypeRolling5h:
-		primaryMetric = "session"
-	case domain.CycleTypeMonthly:
-		primaryMetric = "premium_interactions"
-	default:
-		primaryMetric = ""
-	}
+	primaryMetric := getPrimaryMetric(cycleConfig.CycleType)
 
 	// Get trend data
 	snapshots, err := s.store.GetUsageTrends(p.ID, primaryMetric, startTime, endTime)
@@ -443,22 +396,13 @@ func (s *Server) handleAPIForecast(w nethttp.ResponseWriter, r *nethttp.Request)
 			continue
 		}
 
-		cycleConfig := getProviderCycleConfig(p.Name)
+		cycleConfig := domain.GetProviderCycleConfig(p.Name)
 		snapshots, err := s.store.GetLatestUsageByProvider(p.ID)
 		if err != nil {
 			continue
 		}
 
-		// Determine primary metric based on cycle type
-		var primaryMetric string
-		switch cycleConfig.CycleType {
-		case domain.CycleTypeRolling5h:
-			primaryMetric = "session"
-		case domain.CycleTypeMonthly:
-			primaryMetric = "premium_interactions"
-		default:
-			primaryMetric = ""
-		}
+		primaryMetric := getPrimaryMetric(cycleConfig.CycleType)
 
 		// Find primary snapshot
 		var primarySnapshot *store.UsageSnapshot
@@ -477,7 +421,7 @@ func (s *Server) handleAPIForecast(w nethttp.ResponseWriter, r *nethttp.Request)
 		}
 
 		// Calculate forecast
-		cycleStart, cycleEnd := calculateCycleBoundaries(cycleConfig.CycleType, now, primarySnapshot.ResetAt)
+		cycleStart, cycleEnd := domain.CalculateCycleBoundaries(cycleConfig.CycleType, now, primarySnapshot.ResetAt)
 		if cycleEnd == nil {
 			continue
 		}
@@ -487,7 +431,7 @@ func (s *Server) handleAPIForecast(w nethttp.ResponseWriter, r *nethttp.Request)
 			"cycle_type":    string(cycleConfig.CycleType),
 			"current_usage": primarySnapshot.Used,
 			"cycle_end":     cycleEnd,
-			"time_remaining": formatDuration(cycleEnd.Sub(now)),
+			"time_remaining": domain.FormatDuration(cycleEnd.Sub(now)),
 			"confidence":    0.8, // Default confidence
 		}
 
@@ -506,12 +450,12 @@ func (s *Server) handleAPIForecast(w nethttp.ResponseWriter, r *nethttp.Request)
 							Metric:    td.Metric,
 						}
 					}
-					currentPace, baselinePace, _ := calculatePace(points)
+					currentPace, baselinePace, _ := domain.CalculatePace(points)
 					forecast["current_pace"] = currentPace
 					forecast["baseline_pace"] = baselinePace
 
 					// Forecast exceed time
-					forecastAt, willExceed := forecastLimitExceedTime(
+					forecastAt, willExceed := domain.ForecastLimitExceedTime(
 						primarySnapshot.Used,
 						primarySnapshot.Limit,
 						currentPace,
@@ -577,7 +521,7 @@ func (s *Server) handleAPIProvidersMeta(w nethttp.ResponseWriter, r *nethttp.Req
 	var result []ProviderMeta
 
 	for _, p := range providers {
-		cycleConfig := getProviderCycleConfig(p.Name)
+		cycleConfig := domain.GetProviderCycleConfig(p.Name)
 
 		meta := ProviderMeta{
 			ProviderID:  p.Name,
@@ -633,7 +577,7 @@ func (s *Server) handleAllProvidersTrends(w nethttp.ResponseWriter, r *nethttp.R
 			continue
 		}
 
-		cycleConfig := getProviderCycleConfig(p.Name)
+		cycleConfig := domain.GetProviderCycleConfig(p.Name)
 
 		// Determine time range based on view
 		var startTime, endTime time.Time
@@ -652,16 +596,7 @@ func (s *Server) handleAllProvidersTrends(w nethttp.ResponseWriter, r *nethttp.R
 			endTime = now
 		}
 
-		// Determine primary metric based on cycle type
-		var primaryMetric string
-		switch cycleConfig.CycleType {
-		case domain.CycleTypeRolling5h:
-			primaryMetric = "session"
-		case domain.CycleTypeMonthly:
-			primaryMetric = "premium_interactions"
-		default:
-			primaryMetric = ""
-		}
+		primaryMetric := getPrimaryMetric(cycleConfig.CycleType)
 
 		// Get trend data
 		snapshots, err := s.store.GetUsageTrends(p.ID, primaryMetric, startTime, endTime)
@@ -699,22 +634,4 @@ func (s *Server) handleAllProvidersTrends(w nethttp.ResponseWriter, r *nethttp.R
 	}
 
 	s.jsonResponse(w, result)
-}
-
-// parseBool parses a boolean query parameter
-func parseBool(s string) bool {
-	b, _ := strconv.ParseBool(s)
-	return b
-}
-
-// parseFloat parses a float query parameter
-func parseFloat(s string) float64 {
-	f, _ := strconv.ParseFloat(s, 64)
-	return f
-}
-
-// parseInt parses an int query parameter
-func parseInt(s string) int {
-	i, _ := strconv.Atoi(s)
-	return i
 }

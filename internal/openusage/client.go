@@ -125,6 +125,9 @@ func (c *Client) IsHealthy() bool {
 	if err != nil {
 		return false
 	}
-	defer resp.Body.Close()
+	defer func() {
+		io.Copy(io.Discard, resp.Body)
+		resp.Body.Close()
+	}()
 	return resp.StatusCode == http.StatusOK
 }

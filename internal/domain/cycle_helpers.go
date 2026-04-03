@@ -2,6 +2,7 @@ package domain
 
 import (
 	"fmt"
+	"sort"
 	"time"
 )
 
@@ -105,16 +106,11 @@ func CalculatePace(data []TrendDataPoint) (currentPace, baselinePace, ratio floa
 		return 0, 0, 0
 	}
 
-	// Sort by timestamp (bubble sort for simplicity)
 	sorted := make([]TrendDataPoint, len(data))
 	copy(sorted, data)
-	for i := 0; i < len(sorted)-1; i++ {
-		for j := i + 1; j < len(sorted); j++ {
-			if sorted[i].Timestamp.After(sorted[j].Timestamp) {
-				sorted[i], sorted[j] = sorted[j], sorted[i]
-			}
-		}
-	}
+	sort.Slice(sorted, func(i, j int) bool {
+		return sorted[i].Timestamp.Before(sorted[j].Timestamp)
+	})
 
 	// Calculate current pace from recent data points (last 1 hour or 3 points)
 	recentPoints := 3

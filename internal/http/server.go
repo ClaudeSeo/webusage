@@ -191,37 +191,9 @@ func (s *Server) handleDashboard(w nethttp.ResponseWriter, r *nethttp.Request) {
 		return
 	}
 
-	type MetricView struct {
-		Name    string
-		Label   string
-		Used    float64
-		Limit   float64
-		Percent float64
-		ResetAt time.Time
-	}
-
-	type ProviderView struct {
-		ID                    int64
-		Name                  string
-		Enabled               bool
-		Metrics               []MetricView
-		CollectedAt           time.Time
-		UpdatedAt             time.Time
-		LastError             *string
-		CycleType             string
-		LimitType             string
-		CycleStartAt          time.Time
-		CycleEndAt            time.Time
-		TimeRemaining         string
-		WillExceedBeforeReset bool
-		CurrentPace           float64
-		BaselinePace          float64
-		PaceRatio             float64
-	}
-
-	var views []ProviderView
+	var views []domain.ProviderView
 	for _, p := range providers {
-		view := ProviderView{
+		view := domain.ProviderView{
 			ID:        p.ID,
 			Name:      p.Name,
 			Enabled:   p.Enabled,
@@ -229,7 +201,7 @@ func (s *Server) handleDashboard(w nethttp.ResponseWriter, r *nethttp.Request) {
 			LastError: p.LastError,
 		}
 
-		cycleConfig := getProviderCycleConfig(p.Name)
+		cycleConfig := domain.GetProviderCycleConfig(p.Name)
 		view.CycleType = string(cycleConfig.CycleType)
 		view.LimitType = string(cycleConfig.LimitType)
 
@@ -249,17 +221,17 @@ func (s *Server) handleDashboard(w nethttp.ResponseWriter, r *nethttp.Request) {
 				}
 			}
 
-			cycleStart, cycleEnd := calculateCycleBoundaries(cycleConfig.CycleType, now, primarySnapshot.ResetAt)
+			cycleStart, cycleEnd := domain.CalculateCycleBoundaries(cycleConfig.CycleType, now, primarySnapshot.ResetAt)
 			if cycleStart != nil {
 				view.CycleStartAt = *cycleStart
 			}
 			if cycleEnd != nil {
 				view.CycleEndAt = *cycleEnd
-				view.TimeRemaining = formatDuration(cycleEnd.Sub(now))
+				view.TimeRemaining = domain.FormatDuration(cycleEnd.Sub(now))
 			}
 
 			for _, snap := range snapshots {
-				mv := MetricView{
+				mv := domain.MetricView{
 					Name:  snap.Metric,
 					Label: domain.MetricLabel(snap.Metric),
 					Used:  snap.Used,
@@ -337,7 +309,7 @@ func (s *Server) handleEnableProvider(w nethttp.ResponseWriter, r *nethttp.Reque
 	// Trigger immediate collection
 	if s.collector != nil {
 		go func() {
-			if err := s.collector.CollectAll(r.Context()); err != nil {
+			if err := s.collector.CollectAll(context.Background()); err != nil {
 				s.logger.Error("Immediate collection after enable failed", "provider", name, "error", err)
 			}
 		}()
@@ -375,7 +347,7 @@ func (s *Server) handleCollect(w nethttp.ResponseWriter, r *nethttp.Request) {
 	}
 
 	go func() {
-		if err := s.collector.CollectAll(r.Context()); err != nil {
+		if err := s.collector.CollectAll(context.Background()); err != nil {
 			s.logger.Error("Manual collection failed", "error", err)
 		}
 	}()
@@ -440,39 +412,6 @@ func (s *Server) setupRoutes() {
 func (s *Server) handleStatic(w nethttp.ResponseWriter, r *nethttp.Request) {
 	path := strings.TrimPrefix(r.URL.Path, "/static/")
 	nethttp.ServeFile(w, r, "static/"+path)
-}
-
-// handleAPIProviders returns list of all providers
-func (s *Server) handleAPIProviders(w nethttp.ResponseWriter, r *nethttp.Request) {
-	if r.Method != nethttp.MethodGet {
-		nethttp.Error(w, "Method not allowed", nethttp.StatusMethodNotAllowed)
-		return
-	}
-
-	providers, err := s.store.ListProviders()
-	if err != nil {
-		s.jsonError(w, "Failed to list providers", nethttp.StatusInternalServerError)
-		return
-	}
-
-	type ProviderInfo struct {
-		ProviderID  string `json:"provider_id"`
-		DisplayName string `json:"display_name"`
-		Enabled     bool   `json:"enabled"`
-	}
-
-	var result []ProviderInfo
-	for _, p := range providers {
-		result = append(result, ProviderInfo{
-			ProviderID:  p.Name,
-			DisplayName: getDisplayName(p.Name),
-			Enabled:     p.Enabled,
-		})
-	}
-
-	s.jsonResponse(w, map[string]interface{}{
-		"providers": result,
-	})
 }
 
 // Start begins serving HTTP requests

@@ -51,12 +51,6 @@ func (c *Collector) Start(ctx context.Context) error {
 	c.logger.Info("Starting usage collector from OpenUsage API",
 		"interval", c.interval.String())
 
-	// Check OpenUsage availability
-	if !c.client.IsHealthy() {
-		c.logger.Warn("OpenUsage API not available at startup",
-			"hint", "Make sure OpenUsage app is running")
-	}
-
 	ticker := time.NewTicker(c.interval)
 	defer ticker.Stop()
 
