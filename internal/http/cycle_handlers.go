@@ -597,43 +597,62 @@ func (s *Server) handleAllProvidersTrends(w nethttp.ResponseWriter, r *nethttp.R
 		}
 
 		cycleConfig := domain.GetProviderCycleConfig(p.Name)
-
 		startTime, endTime := resolveAllProvidersTrendWindow(rangeValue, view, now)
 
-		primaryMetric := getPrimaryMetric(cycleConfig.CycleType)
-
-		// Get trend data
-		snapshots, err := s.store.GetUsageTrends(p.ID, primaryMetric, startTime, endTime)
+		// 모든 metric 데이터를 한 번에 조회 (metric="" → 전체)
+		allSnapshots, err := s.store.GetUsageTrends(p.ID, "", startTime, endTime)
 		if err != nil {
 			continue
 		}
 
-		// Convert to trend points
-		var trend []map[string]interface{}
-		for _, snap := range snapshots {
-			trend = append(trend, map[string]interface{}{
+		// 최신 snapshot에서 metric별 limit 정보 수집
+		latestSnapshots, _ := s.store.GetLatestUsageByProvider(p.ID)
+		metricLimits := make(map[string]*float64)
+		for _, snap := range latestSnapshots {
+			if snap.Limit != nil {
+				metricLimits[snap.Metric] = snap.Limit
+			}
+		}
+
+		// metric별로 trend 데이터 그룹화
+		metricTrends := make(map[string][]map[string]interface{})
+		availableMetrics := []string{}
+		seen := make(map[string]bool)
+
+		for _, snap := range allSnapshots {
+			if !seen[snap.Metric] {
+				seen[snap.Metric] = true
+				availableMetrics = append(availableMetrics, snap.Metric)
+			}
+			metricTrends[snap.Metric] = append(metricTrends[snap.Metric], map[string]interface{}{
 				"timestamp": snap.CollectedAt.Format(time.RFC3339),
 				"value":     snap.Used,
 				"metric":    snap.Metric,
 			})
 		}
 
-		// Get latest snapshot for limit info
-		latestSnapshots, _ := s.store.GetLatestUsageByProvider(p.ID)
-		var limit *float64
-		for _, snap := range latestSnapshots {
-			if snap.Limit != nil {
-				limit = snap.Limit
-				break
+		// metric별 {trend, limit} 구조로 변환
+		metricsData := make(map[string]interface{})
+		for _, metric := range availableMetrics {
+			metricsData[metric] = map[string]interface{}{
+				"trend": metricTrends[metric],
+				"limit": metricLimits[metric],
 			}
 		}
 
+		// primary metric 결정 (기본 선택값)
+		primaryMetric := getPrimaryMetric(cycleConfig.CycleType)
+		if primaryMetric == "" && len(availableMetrics) > 0 {
+			primaryMetric = availableMetrics[0]
+		}
+
 		result[p.Name] = map[string]interface{}{
-			"display_name": getDisplayName(p.Name),
-			"cycle_type":   string(cycleConfig.CycleType),
-			"limit_type":   string(cycleConfig.LimitType),
-			"limit":        limit,
-			"trend":        trend,
+			"display_name":      getDisplayName(p.Name),
+			"cycle_type":        string(cycleConfig.CycleType),
+			"limit_type":        string(cycleConfig.LimitType),
+			"available_metrics": availableMetrics,
+			"primary_metric":    primaryMetric,
+			"metrics":           metricsData,
 		}
 	}
 

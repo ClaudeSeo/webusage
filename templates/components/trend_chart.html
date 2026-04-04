@@ -135,6 +135,50 @@
     border-radius: 50%;
 }
 
+/* Metric selector per provider */
+.trend-metric-selectors {
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+    margin-bottom: 1rem;
+    padding: 0.625rem 0.75rem;
+    background: var(--bg-card);
+    border-radius: var(--radius-md);
+    border: 1px solid var(--border-color);
+}
+
+.metric-selector-label {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    display: flex;
+    align-items: center;
+    gap: 0.375rem;
+    margin-right: 0.25rem;
+}
+
+.metric-chip {
+    padding: 0.25rem 0.625rem;
+    border-radius: 9999px;
+    font-size: 0.7rem;
+    font-weight: 500;
+    cursor: pointer;
+    border: 1px solid var(--border-color);
+    background: transparent;
+    color: var(--text-secondary);
+    transition: all 0.2s ease;
+}
+
+.metric-chip:hover {
+    border-color: var(--accent-blue);
+    color: var(--text-primary);
+}
+
+.metric-chip.active {
+    background: rgba(0, 112, 243, 0.15);
+    border-color: var(--accent-blue);
+    color: var(--accent-blue);
+}
+
 .trend-chart-canvas-wrapper {
     position: relative;
     height: 400px;
@@ -176,8 +220,8 @@
         <div class="trend-chart-controls">
             <!-- Mode Toggle: Delta / Cumulative -->
             <div class="trend-mode-toggle">
-                <button class="trend-mode-btn active" data-mode="delta" onclick="setChartMode('delta')">Delta</button>
-                <button class="trend-mode-btn" data-mode="cumulative" onclick="setChartMode('cumulative')">Cumulative</button>
+                <button class="trend-mode-btn" data-mode="delta" onclick="setChartMode('delta')">Delta</button>
+                <button class="trend-mode-btn active" data-mode="cumulative" onclick="setChartMode('cumulative')">Cumulative</button>
             </div>
             <!-- Range Tabs -->
             <div class="trend-chart-tabs">
@@ -198,6 +242,11 @@
     <div id="providerFilters" class="trend-provider-filters">
         <!-- Dynamically populated -->
     </div>
+
+    <!-- Metric Selectors (provider별 표시값 선택) -->
+    <div id="metricSelectors" class="trend-metric-selectors" style="display:none;">
+        <!-- Dynamically populated -->
+    </div>
     
     <div class="trend-chart-canvas-wrapper">
         <canvas id="trendChart"></canvas>
@@ -208,10 +257,10 @@
 // Global state
 let trendChartInstance = null;
 let currentRange = '{{.Range}}';
-let currentMode = 'delta'; // 'delta' or 'cumulative'
+let currentMode = 'cumulative'; // 'delta' or 'cumulative'
 let currentProviderFilter = 'all'; // 'all' or specific provider name
 let trendDataCache = null;
-let providerLimits = {}; // Store limits for reference lines
+let providerMetricSelections = {}; // provider별 선택된 metric: { claude: 'session', codex: 'credits', ... }
 
 // Provider colors (Vercel style - clean white/blue)
 const PROVIDER_COLORS = {
@@ -250,37 +299,72 @@ function setChartMode(mode) {
 
 function setProviderFilter(provider) {
     currentProviderFilter = provider;
-    
+
     // Update chip states
     document.querySelectorAll('.provider-chip').forEach(chip => {
         chip.classList.toggle('active', chip.dataset.provider === provider);
     });
-    
-    // Re-render with current data
+
+    if (trendDataCache) {
+        renderMetricSelectors(trendDataCache);
+        renderTrendChart(trendDataCache, currentRange);
+    }
+}
+
+function setProviderMetric(providerName, metric) {
+    providerMetricSelections[providerName] = metric;
+
+    // metric chip active 상태 업데이트
+    document.querySelectorAll(`.metric-chip[data-provider="${providerName}"]`).forEach(chip => {
+        chip.classList.toggle('active', chip.dataset.metric === metric);
+    });
+
+    // 차트 재렌더링
     if (trendDataCache) {
         renderTrendChart(trendDataCache, currentRange);
     }
 }
 
-function calculateDeltaValues(data, providerName) {
-    // Calculate delta (difference between consecutive points)
+function escapeHtml(str) {
+    return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+}
+
+function getSelectedMetricData(data, providerName) {
     const providerObj = data[providerName];
-    if (!providerObj || !providerObj.trend) return [];
-    
-    const points = providerObj.trend;
+    if (!providerObj) return null;
+    const selectedMetric = providerMetricSelections[providerName] ?? providerObj.primary_metric;
+    return (providerObj.metrics && providerObj.metrics[selectedMetric]) || null;
+}
+
+function getSelectedTrend(data, providerName) {
+    const metricData = getSelectedMetricData(data, providerName);
+    return metricData ? (metricData.trend || []) : [];
+}
+
+function getSelectedLimit(data, providerName) {
+    const metricData = getSelectedMetricData(data, providerName);
+    return metricData ? metricData.limit : null;
+}
+
+function calculateDeltaValues(data, providerName) {
+    const points = getSelectedTrend(data, providerName);
+    if (!points.length) return [];
+
     const deltaPoints = [];
-    
     for (let i = 0; i < points.length; i++) {
         const current = points[i];
         const prevValue = i > 0 ? points[i - 1].value : 0;
-        
+
         // Delta calculation with negative guard (reset handling)
         let delta = current.value - prevValue;
         if (delta < 0) {
-            // Reset detected - use current value as delta (or 0 if it's a fresh start)
             delta = i === 0 ? 0 : current.value;
         }
-        
+
         deltaPoints.push({
             timestamp: current.timestamp,
             value: Math.max(0, delta),
@@ -288,16 +372,12 @@ function calculateDeltaValues(data, providerName) {
             status: current.status || 'ok'
         });
     }
-    
     return deltaPoints;
 }
 
 function calculateCumulativeValues(data, providerName) {
-    // Use raw cumulative values
-    const providerObj = data[providerName];
-    if (!providerObj || !providerObj.trend) return [];
-    
-    return providerObj.trend.map(point => ({
+    const points = getSelectedTrend(data, providerName);
+    return points.map(point => ({
         timestamp: point.timestamp,
         value: point.value,
         metric: point.metric,
@@ -328,33 +408,81 @@ function calculateMovingAverage(values, windowSize) {
 function renderProviderFilters(data) {
     const container = document.getElementById('providerFilters');
     const providers = Object.keys(data);
-    
+
     if (providers.length === 0) {
         container.innerHTML = '';
         return;
     }
-    
-    // Store limits for reference lines
+
+    // provider별 기본 metric 선택값 초기화 (null로 저장해 ?? 연산자가 올바르게 동작하도록)
     providers.forEach(name => {
-        if (data[name].limit) {
-            providerLimits[name] = data[name].limit;
+        if (providerMetricSelections[name] === undefined) {
+            providerMetricSelections[name] = data[name].primary_metric || null;
         }
     });
-    
-    let html = `<div class="provider-chip active" data-provider="all" onclick="setProviderFilter('all')">
+
+    let html = `<div class="provider-chip active" data-provider="all">
         <span>전체</span>
     </div>`;
-    
+
     providers.forEach((name, index) => {
         const color = getProviderColor(name, index);
-        const displayName = data[name].display_name || name;
-        html += `<div class="provider-chip" data-provider="${name}" onclick="setProviderFilter('${name}')">
+        const displayName = escapeHtml(data[name].display_name || name);
+        html += `<div class="provider-chip" data-provider="${escapeHtml(name)}">
             <span class="chip-dot" style="background: ${color.border}"></span>
             <span>${displayName}</span>
         </div>`;
     });
-    
+
     container.innerHTML = html;
+    container.querySelectorAll('.provider-chip').forEach(chip => {
+        chip.addEventListener('click', () => setProviderFilter(chip.dataset.provider));
+    });
+    renderMetricSelectors(data);
+}
+
+function renderMetricSelectors(data) {
+    const container = document.getElementById('metricSelectors');
+    const providers = currentProviderFilter === 'all'
+        ? Object.keys(data)
+        : [currentProviderFilter].filter(p => data[p]);
+
+    // metric 선택지가 없거나 모든 provider가 metric이 1개면 숨김
+    const hasMultipleMetrics = providers.some(name => {
+        const metrics = data[name] && data[name].available_metrics;
+        return metrics && metrics.length > 1;
+    });
+
+    if (!hasMultipleMetrics) {
+        container.style.display = 'none';
+        return;
+    }
+
+    container.style.display = 'flex';
+    let html = '';
+
+    providers.forEach(name => {
+        const providerObj = data[name];
+        if (!providerObj) return;
+
+        const metrics = providerObj.available_metrics || [];
+        if (metrics.length <= 1) return;
+
+        const displayName = escapeHtml(providerObj.display_name || name);
+        const selectedMetric = providerMetricSelections[name] ?? providerObj.primary_metric;
+
+        html += `<span class="metric-selector-label">${displayName}:</span>`;
+        metrics.forEach(metric => {
+            const isActive = metric === selectedMetric;
+            html += `<button class="metric-chip ${isActive ? 'active' : ''}"
+                data-provider="${escapeHtml(name)}" data-metric="${escapeHtml(metric)}">${escapeHtml(metric)}</button>`;
+        });
+    });
+
+    container.innerHTML = html;
+    container.querySelectorAll('.metric-chip').forEach(chip => {
+        chip.addEventListener('click', () => setProviderMetric(chip.dataset.provider, chip.dataset.metric));
+    });
 }
 
 async function loadTrendData(range = '24h') {
@@ -449,19 +577,18 @@ function renderTrendChart(data, range) {
             return val;
         });
         
-        // Determine chart type based on range
-        // 24h: Bar, 7d: Bar, 30d: Line
-        const chartType = (range === '24h' || range === '7d') ? 'bar' : 'line';
-        
+        // Cumulative: 항상 Line, Delta: 24h/7d → Bar, 30d → Line
+        const chartType = (currentMode === 'cumulative' || range === '30d') ? 'line' : 'bar';
+
         datasets.push({
             label: displayName,
             data: values,
             borderColor: color.border,
             backgroundColor: chartType === 'bar' ? color.border : color.bg,
-            borderWidth: (range === '24h' || range === '7d') ? 1 : 2,
+            borderWidth: chartType === 'bar' ? 1 : 2,
             tension: 0.4,
-            fill: range === '30d', // Enable fill for 30d line chart
-            pointRadius: range === '30d' ? 3 : 0,
+            fill: chartType === 'line' && currentMode === 'cumulative',
+            pointRadius: chartType === 'line' ? 3 : 0,
             pointHoverRadius: 5,
             type: chartType,
             order: index
@@ -486,11 +613,12 @@ function renderTrendChart(data, range) {
             });
         }
         
-        // Track limit for reference lines
-        if (providerData.limit && providerData.limit > 0) {
+        // Track limit for reference lines (metric별 limit 사용)
+        const selectedLimit = getSelectedLimit(data, providerName);
+        if (selectedLimit && selectedLimit > 0) {
             hasLimit = true;
-            limitValue = Math.max(limitValue, providerData.limit);
-            warningValue = Math.max(warningValue, providerData.limit * 0.8);
+            limitValue = Math.max(limitValue, selectedLimit);
+            warningValue = Math.max(warningValue, selectedLimit * 0.8);
         }
     });
     
@@ -499,10 +627,10 @@ function renderTrendChart(data, range) {
         trendChartInstance.destroy();
     }
     
-    // Calculate Y-axis max
+    // Y축 최대값 계산: limit이 있으면 정확히 limit 값으로 고정 (5h session, copilot-premium, gemini-pro 등 limit=100인 경우 max=100)
     let yAxisMax;
     if (hasLimit) {
-        yAxisMax = Math.max(limitValue * 1.1, maxDataValue * 1.2);
+        yAxisMax = Math.max(limitValue, maxDataValue * 1.2);
     } else {
         yAxisMax = maxDataValue * 1.2 || 100; // Default if no data
     }
@@ -600,7 +728,7 @@ function renderTrendChart(data, range) {
                             // Add limit percentage for cumulative mode
                             if (currentMode === 'cumulative' && hasLimit && limitValue > 0) {
                                 const percent = ((val / limitValue) * 100).toFixed(1);
-                                label += ` | ${percent}%`;
+                                label += ` | ${percent}% of limit`;
                             }
                             
                             return label;
@@ -662,9 +790,9 @@ function renderTrendChart(data, range) {
 
 // Initialize chart on page load
 document.addEventListener('DOMContentLoaded', function() {
-    // Restore mode from localStorage
+    // localStorage에 저장된 모드가 있으면 복원, 없으면 기본값 cumulative 유지
     const savedMode = localStorage.getItem('trendChartMode');
-    if (savedMode) {
+    if (savedMode && savedMode !== currentMode) {
         currentMode = savedMode;
         document.querySelectorAll('.trend-mode-btn').forEach(btn => {
             btn.classList.toggle('active', btn.dataset.mode === savedMode);
