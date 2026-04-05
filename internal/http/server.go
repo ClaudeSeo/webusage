@@ -264,7 +264,7 @@ func (s *Server) handleDashboard(w nethttp.ResponseWriter, r *nethttp.Request) {
 		"Providers": views,
 		"Year":      time.Now().Year(),
 		"Interval":  5,
-		"Range":     "24h",
+		"Range":     "5h",
 		"TrendData": nil,
 	}
 

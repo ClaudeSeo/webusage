@@ -42,22 +42,19 @@ type TimeRange struct {
 type RangeType string
 
 const (
+	Range5h  RangeType = "5h"
 	Range24h RangeType = "24h"
 	Range7d  RangeType = "7d"
 	Range30d RangeType = "30d"
 )
 
 // ValidRanges lists all valid range types
-var ValidRanges = []RangeType{Range24h, Range7d, Range30d}
+var ValidRanges = []RangeType{Range5h, Range24h, Range7d, Range30d}
 
 // IsValidRange checks if a range string is valid
 func IsValidRange(rangeStr string) bool {
-	for _, r := range ValidRanges {
-		if string(r) == rangeStr {
-			return true
-		}
-	}
-	return false
+	_, err := ParseRangeType(rangeStr)
+	return err == nil
 }
 
 // GetTimeRange returns start and end times for a range type
@@ -66,6 +63,8 @@ func GetTimeRange(rt RangeType) TimeRange {
 	var start time.Time
 
 	switch rt {
+	case Range5h:
+		start = now.Add(-5 * time.Hour)
 	case Range24h:
 		start = now.Add(-24 * time.Hour)
 	case Range7d:
@@ -85,6 +84,8 @@ func GetTimeRange(rt RangeType) TimeRange {
 // ParseRangeType parses a string into RangeType with validation
 func ParseRangeType(rangeStr string) (RangeType, error) {
 	switch rangeStr {
+	case "5h":
+		return Range5h, nil
 	case "24h":
 		return Range24h, nil
 	case "7d":
@@ -92,7 +93,7 @@ func ParseRangeType(rangeStr string) (RangeType, error) {
 	case "30d":
 		return Range30d, nil
 	default:
-		return "", fmt.Errorf("invalid range: %s (valid: 24h, 7d, 30d)", rangeStr)
+		return "", fmt.Errorf("invalid range: %s (valid: 5h, 24h, 7d, 30d)", rangeStr)
 	}
 }
 

@@ -569,6 +569,8 @@ func resolveAllProvidersTrendWindow(rangeValue, view string, now time.Time) (tim
 	}
 
 	switch selector {
+	case "5h":
+		return now.Add(-5 * time.Hour), now
 	case "7d":
 		return now.Add(-7 * 24 * time.Hour), now
 	case "30d":
@@ -588,7 +590,8 @@ func (s *Server) handleAllProvidersTrends(w nethttp.ResponseWriter, r *nethttp.R
 		return
 	}
 
-	now := time.Now()
+	// DB의 collected_at이 UTC로 저장되므로 UTC 기준으로 비교
+	now := time.Now().UTC()
 	result := make(map[string]interface{})
 
 	for _, p := range providers {

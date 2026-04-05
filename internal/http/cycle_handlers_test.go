@@ -241,7 +241,7 @@ func TestCycleAware_Trends_AllProvidersRangeWindow(t *testing.T) {
 	defer cleanup()
 
 	claudeID, _ := server.store.CreateProvider("claude", `{}`)
-	now := time.Now()
+	now := time.Now().UTC()
 
 	snapshots := []*store.UsageSnapshot{
 		{
@@ -268,8 +268,11 @@ func TestCycleAware_Trends_AllProvidersRangeWindow(t *testing.T) {
 		server.store.CreateUsageSnapshot(snapshot)
 	}
 
-	type providerTrend struct {
-		Trend []domain.TrendDataPoint `json:"trend"`
+	type metricTrendData struct {
+		Trend []map[string]interface{} `json:"trend"`
+	}
+	type providerResponse struct {
+		Metrics map[string]metricTrendData `json:"metrics"`
 	}
 
 	testCases := []struct {
@@ -277,6 +280,7 @@ func TestCycleAware_Trends_AllProvidersRangeWindow(t *testing.T) {
 		query       string
 		expectCount int
 	}{
+		{name: "5h range", query: "/api/trends?range=5h", expectCount: 1},
 		{name: "24h range", query: "/api/trends?range=24h", expectCount: 1},
 		{name: "7d range", query: "/api/trends?range=7d", expectCount: 2},
 		{name: "30d range", query: "/api/trends?range=30d", expectCount: 3},
@@ -294,17 +298,21 @@ func TestCycleAware_Trends_AllProvidersRangeWindow(t *testing.T) {
 				t.Fatalf("Expected status 200, got %d", w.Code)
 			}
 
-			var resp map[string]providerTrend
+			var resp map[string]providerResponse
 			if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
 				t.Fatalf("Failed to parse response: %v", err)
 			}
 
-			claudeTrend, ok := resp["claude"]
+			claudeResp, ok := resp["claude"]
 			if !ok {
 				t.Fatal("Expected 'claude' in response")
 			}
-			if len(claudeTrend.Trend) != tc.expectCount {
-				t.Fatalf("Expected %d trend points, got %d", tc.expectCount, len(claudeTrend.Trend))
+			sessionMetric, ok := claudeResp.Metrics["session"]
+			if !ok {
+				t.Fatal("Expected 'session' metric in claude response")
+			}
+			if len(sessionMetric.Trend) != tc.expectCount {
+				t.Fatalf("Expected %d trend points, got %d", tc.expectCount, len(sessionMetric.Trend))
 			}
 		})
 	}

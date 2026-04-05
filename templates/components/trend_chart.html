@@ -225,8 +225,11 @@
             </div>
             <!-- Range Tabs -->
             <div class="trend-chart-tabs">
-                <button class="trend-chart-tab {{if eq .Range "24h"}}active{{end}}" 
-                        onclick="loadTrendData('24h')" 
+                <button class="trend-chart-tab {{if eq .Range "5h"}}active{{end}}"
+                        onclick="loadTrendData('5h')"
+                        data-range="5h">5h</button>
+                <button class="trend-chart-tab {{if eq .Range "24h"}}active{{end}}"
+                        onclick="loadTrendData('24h')"
                         data-range="24h">24h</button>
                 <button class="trend-chart-tab {{if eq .Range "7d"}}active{{end}}" 
                         onclick="loadTrendData('7d')" 
@@ -485,7 +488,7 @@ function renderMetricSelectors(data) {
     });
 }
 
-async function loadTrendData(range = '24h') {
+async function loadTrendData(range = '5h') {
     try {
         currentRange = range;
         const response = await fetch(`/api/trends?range=${range}`);
@@ -590,6 +593,7 @@ function renderTrendChart(data, range) {
             fill: chartType === 'line' && currentMode === 'cumulative',
             pointRadius: chartType === 'line' ? 3 : 0,
             pointHoverRadius: 5,
+            spanGaps: true,
             type: chartType,
             order: index
         });
@@ -669,7 +673,7 @@ function renderTrendChart(data, range) {
     // Format labels based on range
     const formattedLabels = sortedLabels.map(label => {
         const date = new Date(label);
-        if (range === '24h') {
+        if (range === '5h' || range === '24h') {
             return date.toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' });
         } else if (range === '7d') {
             return date.toLocaleDateString('ko-KR', { month: 'short', day: 'numeric' });

@@ -6,7 +6,7 @@
         - ID, Name, Used, Limit, Remaining, ResetAt, CollectedAt, LastError, UpdatedAt
     .HealthStatus: "ok" | "degraded" | "error"
     .TrendData: TrendResponse (optional)
-    .Range: "24h" | "7d" | "30d" (default: "24h")
+    .Range: "5h" | "24h" | "7d" | "30d" (default: "5h")
     .HasError: bool
     .ErrorMessage: string
     .RiskSummary: {CriticalCount, WarningCount, StaleCount, OkCount}
