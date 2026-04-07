@@ -58,10 +58,16 @@
     </div>
     
     {{/* Trend Chart */}}
-    {{template "trendChart" dict 
+    {{template "trendChart" dict
         "Range" .Range
         "Providers" .Providers
         "TrendData" .TrendData
+    }}
+
+    {{/* Heatmap */}}
+    {{template "heatmap" dict
+        "Range" .Range
+        "Providers" .Providers
     }}
 {{end}}
 

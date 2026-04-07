@@ -549,6 +549,52 @@ func (s *Server) handleAPIProvidersMeta(w nethttp.ResponseWriter, r *nethttp.Req
 	})
 }
 
+// handleAPIHeatmap returns heatmap data aggregated by hour and weekday
+// GET /api/heatmap?provider_id=&range=7d
+func (s *Server) handleAPIHeatmap(w nethttp.ResponseWriter, r *nethttp.Request) {
+	if r.Method != nethttp.MethodGet {
+		nethttp.Error(w, "Method not allowed", nethttp.StatusMethodNotAllowed)
+		return
+	}
+
+	providerIDStr := r.URL.Query().Get("provider_id")
+	rangeValue := r.URL.Query().Get("range")
+	if rangeValue == "" {
+		rangeValue = "7d"
+	}
+
+	now := time.Now().UTC()
+	var startTime time.Time
+	switch rangeValue {
+	case "7d":
+		startTime = now.Add(-7 * 24 * time.Hour)
+	case "30d":
+		startTime = now.Add(-30 * 24 * time.Hour)
+	case "24h":
+		startTime = now.Add(-24 * time.Hour)
+	default:
+		startTime = now.Add(-7 * 24 * time.Hour)
+	}
+
+	var providerID int64
+	if providerIDStr != "" {
+		p, err := s.store.GetProviderByName(providerIDStr)
+		if err != nil {
+			s.jsonError(w, fmt.Sprintf("Provider '%s' not found", providerIDStr), nethttp.StatusNotFound)
+			return
+		}
+		providerID = p.ID
+	}
+
+	data, err := s.store.GetHeatmapData(providerID, startTime, now)
+	if err != nil {
+		s.jsonError(w, "Failed to get heatmap data", nethttp.StatusInternalServerError)
+		return
+	}
+
+	s.jsonResponse(w, data)
+}
+
 // getDisplayName returns the display name for a provider
 func getDisplayName(name string) string {
 	displayNames := map[string]string{

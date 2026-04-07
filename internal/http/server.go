@@ -84,6 +84,11 @@ func (s *Server) loadTemplates() error {
 		return fmt.Errorf("loading error_state: %w", err)
 	}
 
+	heatmap, err := os.ReadFile(filepath.Join(basePath, "components", "heatmap.html"))
+	if err != nil {
+		return fmt.Errorf("loading heatmap: %w", err)
+	}
+
 	dashboard, err := os.ReadFile(filepath.Join(basePath, "dashboard.html"))
 	if err != nil {
 		return fmt.Errorf("loading dashboard: %w", err)
@@ -171,7 +176,7 @@ func (s *Server) loadTemplates() error {
 	}
 
 	allContent := string(layout) + string(dashboard) +
-		string(providerCard) + string(trendChart) + string(errorState)
+		string(providerCard) + string(trendChart) + string(errorState) + string(heatmap)
 
 	tmpl, err := template.New("layout").Funcs(funcMap).Parse(allContent)
 	if err != nil {
@@ -409,6 +414,7 @@ func (s *Server) setupRoutes() {
 	s.mux.HandleFunc("/api/forecast", s.handleAPIForecast)
 	s.mux.HandleFunc("/api/providers", s.handleAPIProvidersMeta)
 	s.mux.HandleFunc("/api/providers/", s.handleProviderAction)
+	s.mux.HandleFunc("/api/heatmap", s.handleAPIHeatmap)
 	s.mux.HandleFunc("/api/collect", s.handleCollect)
 	s.mux.HandleFunc("/healthz", s.handleHealthz)
 }

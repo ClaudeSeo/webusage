@@ -281,3 +281,88 @@ func (s *Store) DeleteOldUsage(olderThan time.Time) (int64, error) {
 
 	return rows, nil
 }
+
+// HeatmapDataPoint는 히트맵의 개별 데이터 포인트
+type HeatmapDataPoint struct {
+	Hour  int     `json:"hour"`
+	Day   int     `json:"day"` // 0=Mon, 1=Tue, ..., 6=Sun
+	Value float64 `json:"value"`
+}
+
+// HeatmapData는 시간대×요일 집계 히트맵 데이터
+type HeatmapData struct {
+	Hours    []int              `json:"hours"`
+	Days     []string           `json:"days"`
+	Data     []HeatmapDataPoint `json:"data"`
+	MaxValue float64            `json:"max_value"`
+}
+
+// GetHeatmapData retrieves heatmap data aggregated by hour and weekday
+// providerID가 0이면 전체 provider 집계
+func (s *Store) GetHeatmapData(providerID int64, startTime, endTime time.Time) (*HeatmapData, error) {
+	// SQLite strftime('%w'): 0=Sun, 1=Mon, ..., 6=Sat
+	// Mon=0 기준으로 변환: (w + 6) % 7
+	var query string
+	var args []interface{}
+
+	if providerID == 0 {
+		query = `
+			SELECT
+				CAST(strftime('%H', collected_at) AS INTEGER) as hour,
+				CAST((CAST(strftime('%w', collected_at) AS INTEGER) + 6) % 7 AS INTEGER) as day,
+				SUM(used) as total_used
+			FROM usage_snapshots
+			WHERE collected_at BETWEEN ? AND ?
+			GROUP BY hour, day
+			ORDER BY day, hour
+		`
+		args = []interface{}{startTime, endTime}
+	} else {
+		query = `
+			SELECT
+				CAST(strftime('%H', collected_at) AS INTEGER) as hour,
+				CAST((CAST(strftime('%w', collected_at) AS INTEGER) + 6) % 7 AS INTEGER) as day,
+				SUM(used) as total_used
+			FROM usage_snapshots
+			WHERE provider_id = ? AND collected_at BETWEEN ? AND ?
+			GROUP BY hour, day
+			ORDER BY day, hour
+		`
+		args = []interface{}{providerID, startTime, endTime}
+	}
+
+	rows, err := s.db.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var dataPoints []HeatmapDataPoint
+	var maxValue float64
+
+	for rows.Next() {
+		var dp HeatmapDataPoint
+		if err := rows.Scan(&dp.Hour, &dp.Day, &dp.Value); err != nil {
+			return nil, err
+		}
+		if dp.Value > maxValue {
+			maxValue = dp.Value
+		}
+		dataPoints = append(dataPoints, dp)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	hours := make([]int, 24)
+	for i := range hours {
+		hours[i] = i
+	}
+
+	return &HeatmapData{
+		Hours:    hours,
+		Days:     []string{"Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"},
+		Data:     dataPoints,
+		MaxValue: maxValue,
+	}, nil
+}
