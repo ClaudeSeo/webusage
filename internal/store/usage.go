@@ -302,14 +302,15 @@ type HeatmapData struct {
 func (s *Store) GetHeatmapData(providerID int64, startTime, endTime time.Time) (*HeatmapData, error) {
 	// SQLite strftime('%w'): 0=Sun, 1=Mon, ..., 6=Sat
 	// Mon=0 기준으로 변환: (w + 6) % 7
+	// collected_at 포맷: "2026-04-07 16:18:07 +0000 UTC" → SUBSTR로 날짜 부분 추출
 	var query string
 	var args []interface{}
 
 	if providerID == 0 {
 		query = `
 			SELECT
-				CAST(strftime('%H', collected_at) AS INTEGER) as hour,
-				CAST((CAST(strftime('%w', collected_at) AS INTEGER) + 6) % 7 AS INTEGER) as day,
+				CAST(strftime('%H', SUBSTR(collected_at, 1, 19)) AS INTEGER) as hour,
+				CAST((CAST(strftime('%w', SUBSTR(collected_at, 1, 19)) AS INTEGER) + 6) % 7 AS INTEGER) as day,
 				SUM(used) as total_used
 			FROM usage_snapshots
 			WHERE collected_at BETWEEN ? AND ?
@@ -320,8 +321,8 @@ func (s *Store) GetHeatmapData(providerID int64, startTime, endTime time.Time) (
 	} else {
 		query = `
 			SELECT
-				CAST(strftime('%H', collected_at) AS INTEGER) as hour,
-				CAST((CAST(strftime('%w', collected_at) AS INTEGER) + 6) % 7 AS INTEGER) as day,
+				CAST(strftime('%H', SUBSTR(collected_at, 1, 19)) AS INTEGER) as hour,
+				CAST((CAST(strftime('%w', SUBSTR(collected_at, 1, 19)) AS INTEGER) + 6) % 7 AS INTEGER) as day,
 				SUM(used) as total_used
 			FROM usage_snapshots
 			WHERE provider_id = ? AND collected_at BETWEEN ? AND ?
