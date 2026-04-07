@@ -282,52 +282,52 @@ func (s *Store) DeleteOldUsage(olderThan time.Time) (int64, error) {
 	return rows, nil
 }
 
-// HeatmapDataPoint는 히트맵의 개별 데이터 포인트
-type HeatmapDataPoint struct {
-	Hour  int     `json:"hour"`
-	Day   int     `json:"day"` // 0=Mon, 1=Tue, ..., 6=Sun
-	Value float64 `json:"value"`
+// HeatmapDay represents a single day in the heatmap
+var _ = HeatmapDay{} // keep type even if unused outside JSON
+
+type HeatmapDay struct {
+	Date  string  `json:"date"`  // "2026-04-07"
+	Value float64 `json:"value"` // total usage for that date
 }
 
-// HeatmapData는 시간대×요일 집계 히트맵 데이터
-type HeatmapData struct {
-	Hours    []int              `json:"hours"`
-	Days     []string           `json:"days"`
-	Data     []HeatmapDataPoint `json:"data"`
-	MaxValue float64            `json:"max_value"`
+type HeatmapWeek struct {
+	Days []*HeatmapDay `json:"days"` // 7 entries (Mon~Sun), nil if no data
 }
 
-// GetHeatmapData retrieves heatmap data aggregated by hour and weekday
+type HeatmapMonth struct {
+	Label string `json:"label"` // "Jan", "Feb", ...
+	Week  int    `json:"week"`  // 0-based week index where this month starts
+}
+
+type HeatmapResponse struct {
+	Weeks    []HeatmapWeek  `json:"weeks"`
+	Months   []HeatmapMonth `json:"months"`
+	MaxValue float64        `json:"max_value"`
+}
+
+// GetHeatmapData retrieves heatmap data aggregated by date (GitHub contribution graph style)
 // providerID가 0이면 전체 provider 집계
-func (s *Store) GetHeatmapData(providerID int64, startTime, endTime time.Time) (*HeatmapData, error) {
-	// SQLite strftime('%w'): 0=Sun, 1=Mon, ..., 6=Sat
-	// Mon=0 기준으로 변환: (w + 6) % 7
-	// collected_at 포맷: "2026-04-07 16:18:07 +0000 UTC" → SUBSTR로 날짜 부분 추출
+func (s *Store) GetHeatmapData(providerID int64, startTime, endTime time.Time) (*HeatmapResponse, error) {
+	// Query daily aggregates
 	var query string
 	var args []interface{}
 
 	if providerID == 0 {
 		query = `
-			SELECT
-				CAST(strftime('%H', SUBSTR(collected_at, 1, 19)) AS INTEGER) as hour,
-				CAST((CAST(strftime('%w', SUBSTR(collected_at, 1, 19)) AS INTEGER) + 6) % 7 AS INTEGER) as day,
-				SUM(used) as total_used
+			SELECT SUBSTR(collected_at, 1, 10) as date, SUM(used) as total_used
 			FROM usage_snapshots
-			WHERE collected_at BETWEEN ? AND ?
-			GROUP BY hour, day
-			ORDER BY day, hour
+			WHERE collected_at >= ? AND collected_at <= ?
+			GROUP BY date
+			ORDER BY date
 		`
 		args = []interface{}{startTime, endTime}
 	} else {
 		query = `
-			SELECT
-				CAST(strftime('%H', SUBSTR(collected_at, 1, 19)) AS INTEGER) as hour,
-				CAST((CAST(strftime('%w', SUBSTR(collected_at, 1, 19)) AS INTEGER) + 6) % 7 AS INTEGER) as day,
-				SUM(used) as total_used
+			SELECT SUBSTR(collected_at, 1, 10) as date, SUM(used) as total_used
 			FROM usage_snapshots
-			WHERE provider_id = ? AND collected_at BETWEEN ? AND ?
-			GROUP BY hour, day
-			ORDER BY day, hour
+			WHERE provider_id = ? AND collected_at >= ? AND collected_at <= ?
+			GROUP BY date
+			ORDER BY date
 		`
 		args = []interface{}{providerID, startTime, endTime}
 	}
@@ -338,32 +338,76 @@ func (s *Store) GetHeatmapData(providerID int64, startTime, endTime time.Time) (
 	}
 	defer rows.Close()
 
-	var dataPoints []HeatmapDataPoint
+	// Build date → value map
+	dateMap := make(map[string]float64)
 	var maxValue float64
-
 	for rows.Next() {
-		var dp HeatmapDataPoint
-		if err := rows.Scan(&dp.Hour, &dp.Day, &dp.Value); err != nil {
+		var dateStr string
+		var total float64
+		if err := rows.Scan(&dateStr, &total); err != nil {
 			return nil, err
 		}
-		if dp.Value > maxValue {
-			maxValue = dp.Value
+		dateMap[dateStr] = total
+		if total > maxValue {
+			maxValue = total
 		}
-		dataPoints = append(dataPoints, dp)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
 
-	hours := make([]int, 24)
-	for i := range hours {
-		hours[i] = i
+	// Find the Monday on or before startTime
+	startMonday := startTime
+	for startMonday.Weekday() != time.Monday {
+		startMonday = startMonday.AddDate(0, 0, -1)
 	}
 
-	return &HeatmapData{
-		Hours:    hours,
-		Days:     []string{"Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"},
-		Data:     dataPoints,
+	// Find the Sunday on or after endTime
+	endSunday := endTime
+	for endSunday.Weekday() != time.Sunday {
+		endSunday = endSunday.AddDate(0, 0, 1)
+	}
+
+	// Build weeks
+	var weeks []HeatmapWeek
+	var months []HeatmapMonth
+	seenMonths := make(map[string]bool)
+
+	current := startMonday
+	for current.Before(endSunday) || current.Equal(endSunday) {
+		var week HeatmapWeek
+		week.Days = make([]*HeatmapDay, 7)
+
+		for dow := 0; dow < 7; dow++ {
+			dayDate := current.AddDate(0, 0, dow)
+			dateStr := dayDate.Format("2006-01-02")
+
+			if val, ok := dateMap[dateStr]; ok {
+				week.Days[dow] = &HeatmapDay{
+					Date:  dateStr,
+					Value: val,
+				}
+			}
+
+			// Track month labels
+			monthLabel := dayDate.Format("Jan")
+			monthKey := dayDate.Format("2006-01")
+			if !seenMonths[monthKey] {
+				seenMonths[monthKey] = true
+				months = append(months, HeatmapMonth{
+					Label: monthLabel,
+					Week:  len(weeks),
+				})
+			}
+		}
+
+		weeks = append(weeks, week)
+		current = current.AddDate(0, 0, 7)
+	}
+
+	return &HeatmapResponse{
+		Weeks:    weeks,
+		Months:   months,
 		MaxValue: maxValue,
 	}, nil
 }

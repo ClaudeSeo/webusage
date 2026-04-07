@@ -549,8 +549,8 @@ func (s *Server) handleAPIProvidersMeta(w nethttp.ResponseWriter, r *nethttp.Req
 	})
 }
 
-// handleAPIHeatmap returns heatmap data aggregated by hour and weekday
-// GET /api/heatmap?provider_id=&range=7d
+// handleAPIHeatmap returns heatmap data aggregated by date (GitHub contribution graph style)
+// GET /api/heatmap?provider_id=&range=1y
 func (s *Server) handleAPIHeatmap(w nethttp.ResponseWriter, r *nethttp.Request) {
 	if r.Method != nethttp.MethodGet {
 		nethttp.Error(w, "Method not allowed", nethttp.StatusMethodNotAllowed)
@@ -560,7 +560,7 @@ func (s *Server) handleAPIHeatmap(w nethttp.ResponseWriter, r *nethttp.Request) 
 	providerIDStr := r.URL.Query().Get("provider_id")
 	rangeValue := r.URL.Query().Get("range")
 	if rangeValue == "" {
-		rangeValue = "7d"
+		rangeValue = "1y"
 	}
 
 	now := time.Now().UTC()
@@ -570,10 +570,10 @@ func (s *Server) handleAPIHeatmap(w nethttp.ResponseWriter, r *nethttp.Request) 
 		startTime = now.Add(-7 * 24 * time.Hour)
 	case "30d":
 		startTime = now.Add(-30 * 24 * time.Hour)
-	case "24h":
-		startTime = now.Add(-24 * time.Hour)
+	case "1y":
+		startTime = now.Add(-365 * 24 * time.Hour)
 	default:
-		startTime = now.Add(-7 * 24 * time.Hour)
+		startTime = now.Add(-365 * 24 * time.Hour)
 	}
 
 	var providerID int64

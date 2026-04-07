@@ -58,70 +58,24 @@
     color: white;
 }
 
-/* 그리드 레이아웃 */
-.heatmap-grid-wrapper {
+/* SVG heatmap wrapper */
+.heatmap-scroll-wrapper {
     overflow-x: auto;
     -webkit-overflow-scrolling: touch;
+    padding-bottom: 0.5rem;
 }
 
-.heatmap-grid {
-    display: grid;
-    /* Y축 레이블 컬럼 + 시간 24칸 */
-    grid-template-columns: 40px repeat(24, 1fr);
-    gap: 2px;
-    min-width: 500px;
+.heatmap-scroll-wrapper::-webkit-scrollbar {
+    height: 6px;
 }
 
-/* X축 헤더 행 (시간 레이블) */
-.heatmap-hour-label {
-    font-size: 0.65rem;
-    color: var(--text-secondary);
-    text-align: center;
-    padding-bottom: 4px;
-    line-height: 1;
+.heatmap-scroll-wrapper::-webkit-scrollbar-track {
+    background: var(--bg-secondary);
 }
 
-.heatmap-hour-label.hidden {
-    visibility: hidden;
-}
-
-/* Y축 요일 레이블 */
-.heatmap-day-label {
-    font-size: 0.7rem;
-    color: var(--text-secondary);
-    display: flex;
-    align-items: center;
-    justify-content: flex-end;
-    padding-right: 6px;
-    white-space: nowrap;
-}
-
-/* 히트맵 셀 */
-.heatmap-cell {
-    width: 100%;
-    aspect-ratio: 1;
-    min-width: 14px;
-    min-height: 14px;
-    border-radius: 2px;
-    cursor: pointer;
-    position: relative;
-    transition: transform 0.1s ease;
-}
-
-.heatmap-cell:hover {
-    transform: scale(1.3);
-    z-index: 10;
-}
-
-@media (max-width: 640px) {
-    .heatmap-cell {
-        min-width: 10px;
-        min-height: 10px;
-    }
-    .heatmap-day-label {
-        font-size: 0.6rem;
-        padding-right: 4px;
-    }
+.heatmap-scroll-wrapper::-webkit-scrollbar-thumb {
+    background: var(--border-color);
+    border-radius: 3px;
 }
 
 /* Tooltip */
@@ -144,7 +98,7 @@
     opacity: 1;
 }
 
-/* 범례 */
+/* Legend */
 .heatmap-legend {
     display: flex;
     align-items: center;
@@ -164,7 +118,7 @@
     border-radius: 2px;
 }
 
-/* 빈 상태 */
+/* Empty state */
 .heatmap-empty {
     text-align: center;
     color: var(--text-secondary);
@@ -180,12 +134,23 @@
     font-size: 0.875rem;
 }
 
-/* 로딩 */
+/* Loading */
 .heatmap-loading {
     text-align: center;
     color: var(--text-secondary);
     padding: 2rem;
     font-size: 0.875rem;
+}
+
+/* SVG cell hover */
+.heatmap-cell-rect {
+    transition: stroke 0.1s ease;
+    cursor: pointer;
+}
+
+.heatmap-cell-rect:hover {
+    stroke: rgba(255, 255, 255, 0.4);
+    stroke-width: 1.5;
 }
 </style>
 
@@ -193,8 +158,9 @@
     <div class="heatmap-header">
         <h3 class="heatmap-title">🌿 활동 히트맵</h3>
         <div class="heatmap-tabs">
-            <button class="heatmap-tab active" data-range="7d" onclick="switchHeatmapRange('7d')">7d</button>
+            <button class="heatmap-tab" data-range="7d" onclick="switchHeatmapRange('7d')">7d</button>
             <button class="heatmap-tab" data-range="30d" onclick="switchHeatmapRange('30d')">30d</button>
+            <button class="heatmap-tab active" data-range="1y" onclick="switchHeatmapRange('1y')">1y</button>
         </div>
     </div>
 
@@ -203,16 +169,21 @@
     </div>
 </div>
 
-<!-- Tooltip 싱글톤 -->
+<!-- Tooltip singleton -->
 <div id="heatmapTooltip" class="heatmap-tooltip"></div>
 
 <script>
 (function() {
-    // GitHub 스타일 다크 테마 색상
     var HEATMAP_COLORS = ['#161b22', '#0e4429', '#006d32', '#26a641', '#39d353'];
-    var DAY_LABELS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+    var DAY_LABELS = ['Mon', '', 'Wed', '', 'Fri', '', 'Sun'];
 
-    var currentHeatmapRange = '7d';
+    var CELL_SIZE = 14;
+    var CELL_GAP = 3;
+    var CELL_STEP = CELL_SIZE + CELL_GAP;
+    var LABEL_LEFT = 40;
+    var LABEL_TOP = 20;
+
+    var currentHeatmapRange = '1y';
     var currentHeatmapProvider = 'all';
 
     function getHeatmapColor(value, maxValue) {
@@ -222,6 +193,11 @@
         if (ratio < 0.50) return HEATMAP_COLORS[2];
         if (ratio < 0.75) return HEATMAP_COLORS[3];
         return HEATMAP_COLORS[4];
+    }
+
+    function formatValue(val) {
+        if (val === undefined || val === null) return '0';
+        return val % 1 === 0 ? val.toString() : val.toFixed(1);
     }
 
     function loadHeatmapData(range, providerFilter) {
@@ -250,7 +226,7 @@
     function renderHeatmap(data) {
         var container = document.getElementById('heatmapContent');
 
-        if (!data || !data.data || data.data.length === 0) {
+        if (!data || !data.weeks || data.weeks.length === 0) {
             container.innerHTML =
                 '<div class="heatmap-empty">' +
                 '<div class="heatmap-empty-icon">🌿</div>' +
@@ -259,61 +235,59 @@
             return;
         }
 
-        // (day, hour) → value 맵 구성
-        var valueMap = {};
-        data.data.forEach(function(d) {
-            valueMap[d.day + '_' + d.hour] = d.value;
-        });
-
+        var weeks = data.weeks;
+        var months = data.months || [];
         var maxValue = data.max_value || 1;
-        var hours = data.hours || [];
-        if (!hours.length) {
-            for (var i = 0; i < 24; i++) hours.push(i);
+
+        var svgWidth = LABEL_LEFT + weeks.length * CELL_STEP + 20;
+        var svgHeight = LABEL_TOP + 7 * CELL_STEP + 10;
+
+        // Build SVG
+        var svg = '<svg width="' + svgWidth + '" height="' + svgHeight + '" xmlns="http://www.w3.org/2000/svg" style="display:block;">';
+
+        // Month labels
+        months.forEach(function(m) {
+            var x = LABEL_LEFT + m.week * CELL_STEP;
+            svg += '<text x="' + x + '" y="12" fill="#8b949e" font-size="11" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,Helvetica,Arial,sans-serif">' + m.label + '</text>';
+        });
+
+        // Day labels (Mon, Wed, Fri)
+        for (var dow = 0; dow < 7; dow++) {
+            if (DAY_LABELS[dow]) {
+                var y = LABEL_TOP + dow * CELL_STEP + CELL_SIZE - 2;
+                svg += '<text x="0" y="' + y + '" fill="#8b949e" font-size="11" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,Helvetica,Arial,sans-serif">' + DAY_LABELS[dow] + '</text>';
+            }
         }
-        var days = data.days || DAY_LABELS;
 
-        // 헤더 행: 빈 코너 + 시간 레이블
-        var headerCells = '<div></div>';
-        hours.forEach(function(h) {
-            var show = (h % 6 === 0);
-            headerCells += '<div class="heatmap-hour-label' + (show ? '' : ' hidden') + '">' +
-                (show ? h + 'h' : '') + '</div>';
+        // Cells
+        weeks.forEach(function(week, weekIdx) {
+            for (var dow = 0; dow < 7; dow++) {
+                var x = LABEL_LEFT + weekIdx * CELL_STEP;
+                var y = LABEL_TOP + dow * CELL_STEP;
+                var day = week.days[dow];
+                var value = day ? day.value : 0;
+                var color = getHeatmapColor(value, maxValue);
+                var dateStr = day ? day.date : '';
+                var tip = dateStr ? dateStr + ': ' + formatValue(value) : '';
+
+                svg += '<rect class="heatmap-cell-rect" x="' + x + '" y="' + y + '" width="' + CELL_SIZE + '" height="' + CELL_SIZE + '" rx="2" ry="2" fill="' + color + '" data-tip="' + tip + '" onmouseenter="showHeatmapTooltip(event, this)" onmouseleave="hideHeatmapTooltip()"/>';
+            }
         });
 
-        // 데이터 행: 요일 레이블 + 셀
-        var dataRows = '';
-        days.forEach(function(dayLabel, dayIndex) {
-            dataRows += '<div class="heatmap-day-label">' + dayLabel + '</div>';
-            hours.forEach(function(h) {
-                var val = valueMap[dayIndex + '_' + h] || 0;
-                var color = getHeatmapColor(val, maxValue);
-                var tip = dayLabel + ' ' + h + '\uc2dc: ' + val.toFixed(1);
-                dataRows += '<div class="heatmap-cell"' +
-                    ' style="background:' + color + '"' +
-                    ' data-tip="' + tip + '"' +
-                    ' onmouseenter="showHeatmapTooltip(event, this)"' +
-                    ' onmouseleave="hideHeatmapTooltip()"></div>';
-            });
-        });
+        svg += '</svg>';
 
-        // 범례
+        // Legend
         var legendCells = HEATMAP_COLORS.map(function(c) {
             return '<div class="heatmap-legend-cell" style="background:' + c + '"></div>';
         }).join('');
-        var legendHTML =
+
+        container.innerHTML =
+            '<div class="heatmap-scroll-wrapper">' + svg + '</div>' +
             '<div class="heatmap-legend">' +
             '<span class="heatmap-legend-label">낮음</span>' +
             legendCells +
             '<span class="heatmap-legend-label">높음</span>' +
             '</div>';
-
-        container.innerHTML =
-            '<div class="heatmap-grid-wrapper">' +
-            '<div class="heatmap-grid">' +
-            headerCells + dataRows +
-            '</div>' +
-            '</div>' +
-            legendHTML;
     }
 
     function switchHeatmapRange(range) {
@@ -324,7 +298,7 @@
         loadHeatmapData(range, currentHeatmapProvider);
     }
 
-    // trend_chart provider chip 클릭 이벤트 위임으로 heatmap 연동
+    // Provider chip click integration
     document.addEventListener('click', function(e) {
         var chip = e.target.closest('.provider-chip[data-provider]');
         if (chip) {
@@ -333,13 +307,15 @@
         }
     });
 
-    // 전역 노출
+    // Global exports
     window.switchHeatmapRange = switchHeatmapRange;
 
-    // Tooltip 핸들러
+    // Tooltip handlers
     window.showHeatmapTooltip = function(event, el) {
         var tooltip = document.getElementById('heatmapTooltip');
-        tooltip.textContent = el.dataset.tip || '';
+        var tip = el.getAttribute('data-tip') || '';
+        if (!tip) return;
+        tooltip.textContent = tip;
         tooltip.classList.add('visible');
         positionHeatmapTooltip(event);
     };
@@ -353,7 +329,6 @@
         var offset = 12;
         var x = event.clientX + offset;
         var y = event.clientY + offset;
-        // 뷰포트 오른쪽 경계 보정
         if (x + 180 > window.innerWidth) {
             x = event.clientX - 180 - offset;
         }
@@ -368,9 +343,9 @@
         }
     });
 
-    // 초기 로드
+    // Initial load
     document.addEventListener('DOMContentLoaded', function() {
-        loadHeatmapData('7d', 'all');
+        loadHeatmapData('1y', 'all');
     });
 })();
 </script>
