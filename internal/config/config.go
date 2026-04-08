@@ -21,6 +21,9 @@ type Config struct {
 
 	// OpenUsageURL은 OpenUsage API endpoint
 	OpenUsageURL string
+
+	// Title은 사이트 제목 접미사. 비어있지 않으면 "WebUsage - <Title>" 표시
+	Title string
 }
 
 // LoadConfig는 .env 파일과 환경변수에서 설정을 로드합니다
@@ -38,6 +41,7 @@ func LoadConfig() (*Config, error) {
 		ServerPort:         getIntEnv("SERVER_PORT", 8080),
 		CollectionInterval: time.Duration(interval) * time.Second,
 		OpenUsageURL:       getEnv("OPENUSAGE_URL", "http://127.0.0.1:6736"),
+		Title:             getEnv("TITLE", ""),
 	}, nil
 }
 

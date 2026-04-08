@@ -71,6 +71,7 @@ func main() {
 
 	// Start HTTP server
 	httpServer, err := internalhttp.NewServer(s, cfg.ServerHost, cfg.ServerPort, logger)
+	httpServer.SetTitle(cfg.Title)
 	if err != nil {
 		logger.Error("Failed to create HTTP server", "error", err)
 		os.Exit(1)

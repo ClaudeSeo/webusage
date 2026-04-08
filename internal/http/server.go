@@ -29,6 +29,7 @@ type Server struct {
 	mux         *nethttp.ServeMux
 	tmpl        *template.Template
 	templateDir string
+	title        string
 }
 
 // NewServer creates a new HTTP server. templateDir은 옵션 — 빈 문자열이면 "templates" 기본값 사용
@@ -63,6 +64,11 @@ func (s *Server) SetCollector(c *collector.Collector) {
 // SetOpenUsageClient sets the OpenUsage client
 func (s *Server) SetOpenUsageClient(client *openusage.Client) {
 	s.openusage = client
+}
+
+// SetTitle sets the site title suffix
+func (s *Server) SetTitle(title string) {
+	s.title = title
 }
 
 // loadTemplates loads HTML templates from the templates/ directory
@@ -271,6 +277,12 @@ func (s *Server) handleDashboard(w nethttp.ResponseWriter, r *nethttp.Request) {
 		"Interval":  5,
 		"Range":     "5h",
 		"TrendData": nil,
+	}
+
+	if s.title != "" {
+		data["Title"] = "WebUsage - " + s.title
+	} else {
+		data["Title"] = "WebUsage"
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")

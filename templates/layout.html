@@ -710,7 +710,7 @@
 <body>
     <header>
         <div class="nav-container">
-            <span class="site-name">WebUsage</span>
+            <span class="site-name">{{if .Title}}{{.Title}}{{else}}WebUsage{{end}}</span>
 
             <div class="header-actions">
                 <button id="refreshBtn" class="refresh-btn" onclick="refreshData()" title="새로고침">↻</button>
