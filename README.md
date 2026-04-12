@@ -16,18 +16,26 @@ webusage focuses on the **view layer** — all credential handling and provider 
 ## Quick Start
 
 ```bash
-# Prerequisite: OpenUsage must be running
-# See: https://github.com/robinebers/openusage
-
-# Build
-go build -o webusage ./cmd/server
-
-# Run (default: connects to OpenUsage at http://127.0.0.1:6736)
-./webusage
-
-# Open dashboard
-open http://127.0.0.1:8080
+curl -fsSL https://raw.githubusercontent.com/ClaudeSeo/webusage/main/scripts/install.sh | bash
 ```
+
+Installs to `~/.local/share/webusage`, runtime data to `~/.webusage/`. Requires Git and Go (or [mise](https://mise.jdx.dev/)).
+
+```bash
+# After install
+webusage-manage start    # pull + build + start in background
+webusage-manage status
+webusage-manage logs
+```
+
+To customize the install location:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/ClaudeSeo/webusage/main/scripts/install.sh \
+  | WEBUSAGE_INSTALL_DIR=~/webusage bash
+```
+
+**Prerequisite:** [OpenUsage](https://github.com/robinebers/openusage) must be running at `http://127.0.0.1:6736`.
 
 ## How It Works
 
