@@ -157,6 +157,15 @@ cmd_status() {
       return 0
     fi
   fi
+  # PID 파일이 없거나 stale 한 경우 binary 경로로 직접 검색
+  local found_pid
+  found_pid="$(pgrep -f "$BINARY" 2>/dev/null | head -1 || true)"
+  if [[ -n "$found_pid" ]]; then
+    echo "실행 중 (PID: $found_pid, PID 파일 불일치 — restart 권장)"
+    echo "  로그: $LOG_FILE"
+    echo "  DB:   $DB_PATH"
+    return 0
+  fi
   echo "중지됨"
   return 1
 }
