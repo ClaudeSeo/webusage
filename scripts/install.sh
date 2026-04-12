@@ -69,10 +69,10 @@ printf '  설치 경로:  %s\n' "$INSTALL_DIR"
 printf '  데이터 경로: %s\n' "$DATA_DIR"
 printf '\n'
 
-# curl | bash 시 stdin 이 파이프이므로 /dev/tty 에서 직접 읽어야 함
-if [[ -t 1 ]] && [[ -e /dev/tty ]]; then
-  read -r -p "지금 바로 시작할까요? [y/N] " answer </dev/tty || answer="n"
-  if [[ "${answer,,}" == "y" ]]; then
+# stdin 이 TTY 일 때만 프롬프트 표시 (curl|bash 파이프 모드에서는 -t 0 이 false)
+if [[ -t 0 ]]; then
+  read -r -p "지금 바로 시작할까요? [y/N] " answer || answer="n"
+  if [[ "$answer" == [yY] ]]; then
     "$INSTALL_DIR/scripts/manage.sh" restart
   fi
 else
