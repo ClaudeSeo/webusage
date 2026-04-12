@@ -1,7 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# 심링크 경유 실행 시에도 실제 스크립트 위치를 기준으로 REPO_DIR 계산
+_SCRIPT="${BASH_SOURCE[0]}"
+while [[ -L "$_SCRIPT" ]]; do
+  _SCRIPT="$(readlink "$_SCRIPT")"
+  [[ "$_SCRIPT" == /* ]] || _SCRIPT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$_SCRIPT"
+done
+REPO_DIR="$(cd "$(dirname "$_SCRIPT")/.." && pwd)"
+unset _SCRIPT
 DATA_DIR="${WEBUSAGE_HOME:-$HOME/.webusage}"
 PID_FILE="$DATA_DIR/webusage.pid"
 LOG_FILE="$DATA_DIR/webusage.log"

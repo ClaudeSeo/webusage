@@ -69,7 +69,12 @@ printf '  설치 경로:  %s\n' "$INSTALL_DIR"
 printf '  데이터 경로: %s\n' "$DATA_DIR"
 printf '\n'
 
-read -r -p "지금 바로 시작할까요? [y/N] " answer
-if [[ "${answer,,}" == "y" ]]; then
-  "$INSTALL_DIR/scripts/manage.sh" restart
+# curl | bash 시 stdin 이 파이프이므로 /dev/tty 에서 직접 읽어야 함
+if [[ -t 1 ]] && [[ -e /dev/tty ]]; then
+  read -r -p "지금 바로 시작할까요? [y/N] " answer </dev/tty || answer="n"
+  if [[ "${answer,,}" == "y" ]]; then
+    "$INSTALL_DIR/scripts/manage.sh" restart
+  fi
+else
+  printf '시작하려면: %s start\n' "$BIN_LINK"
 fi
