@@ -50,7 +50,8 @@ _is_our_process() {
   local pid="$1"
   local running_name
   running_name="$(ps -p "$pid" -o comm= 2>/dev/null || true)"
-  [[ "$running_name" == "$(basename "$BINARY")" ]]
+  # macOS 는 ps -o comm= 에서 전체 경로를 반환하는 경우가 있으므로 basename 비교
+  [[ "$(basename "$running_name")" == "$(basename "$BINARY")" ]]
 }
 
 _kill_pid() {
@@ -157,7 +158,7 @@ cmd_status() {
     if kill -0 "$pid" 2>/dev/null && _is_our_process "$pid"; then
       echo "실행 중 (PID: $pid)"
       echo "  로그: $LOG_FILE"
-      echo "  DB:   $DB_PATH"
+      echo "  DB:   $DATA_DIR/usage.db"
       return 0
     fi
   fi
