@@ -67,15 +67,32 @@ make run     # runs ./webusage
 make dev     # runs via go run
 ```
 
+## Managed Run
+
+`scripts/manage.sh` handles the full lifecycle: pull, build, start, stop, and log tailing.
+
+```bash
+./scripts/manage.sh           # git pull + build + start in background (same as "start")
+./scripts/manage.sh start     # git pull + build + start in background
+./scripts/manage.sh stop      # stop the running process
+./scripts/manage.sh restart   # restart without rebuilding
+./scripts/manage.sh status    # check whether the process is running
+./scripts/manage.sh logs      # tail -f the log file
+./scripts/manage.sh update    # git pull + rebuild + restart (alias for start)
+```
+
+Runtime data (database, PID file, log file) is written to `~/.webusage/` by default. Set `WEBUSAGE_HOME` to use a different directory.
+
 ## Configuration
 
-webusage reads configuration from environment variables. Copy `.env.example` to `.env` to get started.
+webusage reads configuration from environment variables. Place your `.env` file in `$WEBUSAGE_HOME` (default: `~/.webusage/.env`).
 
 | Variable | Default | Description |
 |----------|---------|-------------|
+| `WEBUSAGE_HOME` | `~/.webusage` | Directory for runtime data (DB, PID, logs) |
 | `SERVER_HOST` | `127.0.0.1` | HTTP server bind address |
 | `SERVER_PORT` | `8080` | HTTP server port |
-| `DB_PATH` | `./data/usage.db` | SQLite database file path |
+| `DB_PATH` | `$WEBUSAGE_HOME/usage.db` | SQLite database file path (overrides `WEBUSAGE_HOME`) |
 | `COLLECTION_INTERVAL` | `900` | Usage polling interval in seconds (15 min default) |
 | `OPENUSAGE_URL` | `http://127.0.0.1:6736` | OpenUsage API endpoint |
 
@@ -169,7 +186,8 @@ webusage/
 │       ├── provider_card.html    # Provider usage card
 │       ├── trend_chart.html      # Chart.js trend visualization
 │       └── error_state.html      # Error display component
-├── data/                         # SQLite database directory (gitignored)
+├── scripts/
+│   └── manage.sh                 # Lifecycle management (start/stop/restart/status/logs/update)
 ├── go.mod
 ├── Makefile
 └── mise.toml
