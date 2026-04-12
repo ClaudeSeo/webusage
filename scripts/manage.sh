@@ -53,38 +53,40 @@ _is_our_process() {
   [[ "$running_name" == "$(basename "$BINARY")" ]]
 }
 
+_kill_pid() {
+  local pid="$1"
+  echo "기존 프로세스 종료 (PID: $pid)..."
+  kill "$pid"
+  local deadline=$(( $(date +%s) + 5 ))
+  until ! kill -0 "$pid" 2>/dev/null || [[ $(date +%s) -ge $deadline ]]; do
+    sleep 0.1
+  done
+  if kill -0 "$pid" 2>/dev/null; then
+    echo "SIGTERM 무응답, 강제 종료 (SIGKILL)..."
+    kill -9 "$pid" 2>/dev/null || true
+    sleep 0.2
+  fi
+}
+
 _stop_existing() {
+  local pid=""
+
   if [[ -f "$PID_FILE" ]]; then
-    local pid
-    pid=$(<"$PID_FILE")
-    # 숫자가 아닌 PID 파일은 오염된 것으로 간주
-    if [[ ! "$pid" =~ ^[0-9]+$ ]]; then
-      echo "잘못된 PID 파일 내용, 삭제합니다: $PID_FILE"
-      rm -f "$PID_FILE"
-      return
-    fi
-    if kill -0 "$pid" 2>/dev/null; then
-      # PID 재사용 방지: 실행 중인 프로세스가 실제로 webusage 인지 확인
-      if ! _is_our_process "$pid"; then
-        echo "PID $pid 는 webusage 프로세스가 아님, PID 파일만 삭제합니다"
-        rm -f "$PID_FILE"
-        return
-      fi
-      echo "기존 프로세스 종료 (PID: $pid)..."
-      kill "$pid"
-      # kill -0 이 실패할 때까지 최대 5초 대기
-      local deadline=$(( $(date +%s) + 5 ))
-      until ! kill -0 "$pid" 2>/dev/null || [[ $(date +%s) -ge $deadline ]]; do
-        sleep 0.1
-      done
-      # SIGTERM 무응답 시 SIGKILL 강제 종료
-      if kill -0 "$pid" 2>/dev/null; then
-        echo "SIGTERM 무응답, 강제 종료 (SIGKILL)..."
-        kill -9 "$pid" 2>/dev/null || true
-        sleep 0.2
-      fi
-    fi
+    local file_pid
+    file_pid=$(<"$PID_FILE")
     rm -f "$PID_FILE"
+    if [[ "$file_pid" =~ ^[0-9]+$ ]] && kill -0 "$file_pid" 2>/dev/null && _is_our_process "$file_pid"; then
+      pid="$file_pid"
+    fi
+  fi
+
+  # PID 파일이 stale 하거나 없으면 binary 경로로 실행 중인 프로세스 탐색
+  if [[ -z "$pid" ]]; then
+    pid="$(pgrep -f "$BINARY" 2>/dev/null | head -1 || true)"
+  fi
+
+  if [[ -n "$pid" ]]; then
+    _kill_pid "$pid"
   fi
 }
 
@@ -101,6 +103,8 @@ _start_background() {
   _safe_path "$PID_FILE"
   # config.LoadConfig()가 godotenv.Load()를 cwd 기준으로 호출하므로 REPO_DIR 에서 실행
   cd "$REPO_DIR"
+  # DB_PATH 를 nohup 직전에 명시 설정: 쉘 상속 이슈 및 .env 덮어쓰기 방지
+  export DB_PATH="$DATA_DIR/usage.db"
   echo "백그라운드로 실행 중 (데이터: $DATA_DIR)..."
   nohup "$BINARY" >> "$LOG_FILE" 2>&1 &
   local pid=$!
