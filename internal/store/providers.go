@@ -130,7 +130,7 @@ func (s *Store) ListProviders() ([]*Provider, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var providers []*Provider
 	for rows.Next() {
@@ -200,7 +200,7 @@ func (s *Store) DeleteProviderByName(name string) error {
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 
 	_, err = tx.Exec(`
 		DELETE FROM usage_snapshots WHERE provider_id IN (SELECT id FROM providers WHERE name = ?)

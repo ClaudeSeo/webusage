@@ -61,10 +61,7 @@ func setupTestServerForContract(t *testing.T) (*Server, func()) {
 	}
 
 	cleanup := func() {
-		s.Close()
-		os.Remove(tmpFile)
-		os.Remove(tmpFile + "-wal")
-		os.Remove(tmpFile + "-shm")
+		cleanupHTTPTestStore(t, s, tmpFile)
 	}
 
 	return server, cleanup
@@ -104,8 +101,8 @@ func TestAPIContract_Current(t *testing.T) {
 	defer cleanup()
 
 	// Setup test data
-	providerID, _ := server.store.CreateProvider("claude", `{}`)
-	server.store.EnableProviderByName("claude", true)
+	providerID := mustCreateHTTPTestProvider(t, server, "claude", `{}`)
+	mustEnableHTTPTestProvider(t, server, "claude")
 	now := time.Now()
 	snapshot := &store.UsageSnapshot{
 		ProviderID:  providerID,
@@ -113,7 +110,7 @@ func TestAPIContract_Current(t *testing.T) {
 		Used:        5000.0,
 		CollectedAt: now,
 	}
-	server.store.CreateUsageSnapshot(snapshot)
+	mustCreateHTTPTestSnapshot(t, server, snapshot)
 
 	req := httptest.NewRequest(nethttp.MethodGet, "/api/current", nil)
 	w := httptest.NewRecorder()
@@ -149,8 +146,8 @@ func TestAPIContract_Trends(t *testing.T) {
 	defer cleanup()
 
 	// Setup test data
-	providerID, _ := server.store.CreateProvider("claude", `{}`)
-	server.store.EnableProviderByName("claude", true)
+	providerID := mustCreateHTTPTestProvider(t, server, "claude", `{}`)
+	mustEnableHTTPTestProvider(t, server, "claude")
 	now := time.Now()
 
 	// Insert data for trend
@@ -161,7 +158,7 @@ func TestAPIContract_Trends(t *testing.T) {
 			Used:        float64(i * 100),
 			CollectedAt: now.Add(-time.Duration(i) * time.Hour),
 		}
-		server.store.CreateUsageSnapshot(snapshot)
+		mustCreateHTTPTestSnapshot(t, server, snapshot)
 	}
 
 	req := httptest.NewRequest(nethttp.MethodGet, "/api/trends?provider_id=claude", nil)
@@ -193,7 +190,7 @@ func TestAPIContract_Trends_RequiresProviderID(t *testing.T) {
 	defer cleanup()
 
 	// Setup test data
-	server.store.CreateProvider("claude", `{}`)
+	mustCreateHTTPTestProvider(t, server, "claude", `{}`)
 
 	req := httptest.NewRequest(nethttp.MethodGet, "/api/trends?range=24h", nil)
 	w := httptest.NewRecorder()
@@ -212,8 +209,8 @@ func TestAPIContract_Providers(t *testing.T) {
 	defer cleanup()
 
 	// Setup test data
-	server.store.CreateProvider("claude", `{}`)
-	server.store.CreateProvider("codex", `{}`)
+	mustCreateHTTPTestProvider(t, server, "claude", `{}`)
+	mustCreateHTTPTestProvider(t, server, "codex", `{}`)
 
 	req := httptest.NewRequest(nethttp.MethodGet, "/api/providers", nil)
 	w := httptest.NewRecorder()
@@ -250,7 +247,7 @@ func TestAPIContract_EnableDisableProvider(t *testing.T) {
 	defer cleanup()
 
 	// Create provider
-	server.store.CreateProvider("claude", `{}`)
+	mustCreateHTTPTestProvider(t, server, "claude", `{}`)
 
 	// Test enable
 	req := httptest.NewRequest(nethttp.MethodPost, "/api/providers/claude/enable", nil)

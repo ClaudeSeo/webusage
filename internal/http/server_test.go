@@ -31,13 +31,52 @@ func setupTestServer(t *testing.T) (*Server, func()) {
 	}
 
 	cleanup := func() {
-		s.Close()
-		os.Remove(tmpFile)
-		os.Remove(tmpFile + "-wal")
-		os.Remove(tmpFile + "-shm")
+		cleanupHTTPTestStore(t, s, tmpFile)
 	}
 
 	return server, cleanup
+}
+
+func cleanupHTTPTestStore(t *testing.T, testStore *store.Store, dbPath string) {
+	t.Helper()
+	if err := testStore.Close(); err != nil {
+		t.Errorf("Failed to close test store: %v", err)
+	}
+	for _, path := range []string{dbPath, dbPath + "-wal", dbPath + "-shm"} {
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			t.Errorf("Failed to remove test database file %q: %v", path, err)
+		}
+	}
+}
+
+func mustCreateHTTPTestProvider(t *testing.T, server *Server, name, config string) int64 {
+	t.Helper()
+	providerID, err := server.store.CreateProvider(name, config)
+	if err != nil {
+		t.Fatalf("Failed to create provider %q: %v", name, err)
+	}
+	return providerID
+}
+
+func mustEnableHTTPTestProvider(t *testing.T, server *Server, name string) {
+	t.Helper()
+	if err := server.store.EnableProviderByName(name, true); err != nil {
+		t.Fatalf("Failed to enable provider %q: %v", name, err)
+	}
+}
+
+func mustCreateHTTPTestSnapshot(t *testing.T, server *Server, snapshot *store.UsageSnapshot) {
+	t.Helper()
+	if _, err := server.store.CreateUsageSnapshot(snapshot); err != nil {
+		t.Fatalf("Failed to create usage snapshot for %q: %v", snapshot.Metric, err)
+	}
+}
+
+func mustCreateHTTPTestSnapshots(t *testing.T, server *Server, snapshots []*store.UsageSnapshot) {
+	t.Helper()
+	if err := server.store.CreateUsageSnapshots(snapshots); err != nil {
+		t.Fatalf("Failed to create usage snapshots: %v", err)
+	}
 }
 
 func TestHealthzEndpoint(t *testing.T) {
@@ -102,8 +141,8 @@ func TestCurrentUsageEndpoint(t *testing.T) {
 	defer cleanup()
 
 	// Add provider and usage data
-	providerID, _ := server.store.CreateProvider("claude", `{}`)
-	server.store.EnableProviderByName("claude", true)
+	providerID := mustCreateHTTPTestProvider(t, server, "claude", `{}`)
+	mustEnableHTTPTestProvider(t, server, "claude")
 	now := time.Now()
 
 	snapshot := &store.UsageSnapshot{
@@ -113,7 +152,7 @@ func TestCurrentUsageEndpoint(t *testing.T) {
 		CollectedAt: now,
 		RawJSON:     `{"test":true}`,
 	}
-	server.store.CreateUsageSnapshot(snapshot)
+	mustCreateHTTPTestSnapshot(t, server, snapshot)
 
 	req := httptest.NewRequest(nethttp.MethodGet, "/api/current", nil)
 	w := httptest.NewRecorder()
@@ -144,8 +183,8 @@ func TestTrendsEndpoint(t *testing.T) {
 	defer cleanup()
 
 	// Add provider and historical data
-	providerID, _ := server.store.CreateProvider("claude", `{}`)
-	server.store.EnableProviderByName("claude", true)
+	providerID := mustCreateHTTPTestProvider(t, server, "claude", `{}`)
+	mustEnableHTTPTestProvider(t, server, "claude")
 	now := time.Now()
 
 	snapshots := []*store.UsageSnapshot{
@@ -153,7 +192,7 @@ func TestTrendsEndpoint(t *testing.T) {
 		{ProviderID: providerID, Metric: "session", Used: 2000, CollectedAt: now.Add(-time.Hour)},
 		{ProviderID: providerID, Metric: "session", Used: 3000, CollectedAt: now},
 	}
-	server.store.CreateUsageSnapshots(snapshots)
+	mustCreateHTTPTestSnapshots(t, server, snapshots)
 
 	// Trends now requires provider_id parameter
 	req := httptest.NewRequest(nethttp.MethodGet, "/api/trends?provider_id=claude", nil)
@@ -184,7 +223,7 @@ func TestDashboardEndpoint(t *testing.T) {
 	defer cleanup()
 
 	// Add provider
-	providerID, _ := server.store.CreateProvider("test-provider", `{}`)
+	providerID := mustCreateHTTPTestProvider(t, server, "test-provider", `{}`)
 	now := time.Now()
 
 	snapshot := &store.UsageSnapshot{
@@ -193,7 +232,7 @@ func TestDashboardEndpoint(t *testing.T) {
 		Used:        5000.0,
 		CollectedAt: now,
 	}
-	server.store.CreateUsageSnapshot(snapshot)
+	mustCreateHTTPTestSnapshot(t, server, snapshot)
 
 	req := httptest.NewRequest(nethttp.MethodGet, "/", nil)
 	w := httptest.NewRecorder()

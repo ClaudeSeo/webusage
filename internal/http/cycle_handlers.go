@@ -55,13 +55,14 @@ func aggregateDataByBucket(data []domain.TrendDataPoint, bucket string) []domain
 		return sorted[i].Timestamp.Before(sorted[j].Timestamp)
 	})
 
-	if bucket == "hour" {
+	switch bucket {
+	case "hour":
 		return aggregateByHour(sorted)
-	} else if bucket == "day" {
+	case "day":
 		return aggregateByDay(sorted)
+	default:
+		return sorted
 	}
-
-	return sorted
 }
 
 func aggregateByHour(data []domain.TrendDataPoint) []domain.TrendDataPoint {
@@ -654,25 +655,29 @@ func (s *Server) handleAllProvidersTrends(w nethttp.ResponseWriter, r *nethttp.R
 			continue
 		}
 
-		// 최신 snapshot에서 metric별 limit 정보 수집
-		latestSnapshots, _ := s.store.GetLatestUsageByProvider(p.ID)
+		// 최신 snapshot에서 current catalog와 metric별 limit 정보 수집
+		latestSnapshots, err := s.store.GetLatestUsageByProvider(p.ID)
+		if err != nil {
+			continue
+		}
 		metricLimits := make(map[string]*float64)
+		catalog := make([]string, 0, len(latestSnapshots))
 		for _, snap := range latestSnapshots {
+			catalog = append(catalog, snap.Metric)
 			if snap.Limit != nil {
 				metricLimits[snap.Metric] = snap.Limit
 			}
 		}
+		preference, err := s.store.GetMetricPreference(p.ID)
+		if err != nil {
+			continue
+		}
+		canonicalItems := domain.ReconcileMetricPreferences(preference.Items, catalog)
 
 		// metric별로 trend 데이터 그룹화
 		metricTrends := make(map[string][]map[string]interface{})
-		availableMetrics := []string{}
-		seen := make(map[string]bool)
 
 		for _, snap := range allSnapshots {
-			if !seen[snap.Metric] {
-				seen[snap.Metric] = true
-				availableMetrics = append(availableMetrics, snap.Metric)
-			}
 			metricTrends[snap.Metric] = append(metricTrends[snap.Metric], map[string]interface{}{
 				"timestamp": snap.CollectedAt.Format(time.RFC3339),
 				"value":     snap.Used,
@@ -682,16 +687,25 @@ func (s *Server) handleAllProvidersTrends(w nethttp.ResponseWriter, r *nethttp.R
 
 		// metric별 {trend, limit} 구조로 변환
 		metricsData := make(map[string]interface{})
-		for _, metric := range availableMetrics {
-			metricsData[metric] = map[string]interface{}{
-				"trend": metricTrends[metric],
-				"limit": metricLimits[metric],
+		availableMetrics := make([]string, 0, len(canonicalItems))
+		for _, item := range canonicalItems {
+			if !item.Available || !item.Visible {
+				continue
+			}
+			trend := metricTrends[item.Metric]
+			if trend == nil {
+				trend = []map[string]interface{}{}
+			}
+			availableMetrics = append(availableMetrics, item.Metric)
+			metricsData[item.Metric] = map[string]interface{}{
+				"trend": trend,
+				"limit": metricLimits[item.Metric],
 			}
 		}
 
-		// primary metric 결정 (기본 선택값)
-		primaryMetric := getPrimaryMetric(cycleConfig.CycleType)
-		if primaryMetric == "" && len(availableMetrics) > 0 {
+		// 표시 설정의 첫 metric을 range 데이터 유무와 무관하게 기본 선택한다.
+		primaryMetric := ""
+		if len(availableMetrics) > 0 {
 			primaryMetric = availableMetrics[0]
 		}
 

@@ -640,6 +640,149 @@
             color: var(--accent-red);
             border: 1px solid var(--accent-red);
         }
+
+        .metric-preference-provider {
+            padding: 0.875rem;
+            margin-bottom: 0.75rem;
+            border: 1px solid var(--border-color);
+            border-radius: var(--radius-md);
+            background: var(--bg-card);
+        }
+
+        .metric-preference-provider-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 0.5rem;
+            margin-bottom: 0.625rem;
+        }
+
+        .metric-preference-provider-title {
+            margin: 0;
+            font-size: 0.875rem;
+        }
+
+        .metric-preference-provider-state {
+            color: var(--text-muted);
+            font-size: 0.7rem;
+        }
+
+        .metric-preference-list {
+            display: flex;
+            flex-direction: column;
+            gap: 0.5rem;
+        }
+
+        .metric-preference-row {
+            display: grid;
+            grid-template-columns: auto minmax(0, 1fr) auto auto auto;
+            align-items: center;
+            gap: 0.4rem;
+            padding: 0.5rem;
+            border: 1px solid var(--border-color);
+            border-radius: var(--radius-sm);
+            background: var(--bg-secondary);
+        }
+
+        .metric-preference-row.dragging {
+            opacity: 0.55;
+        }
+
+        .metric-preference-row:focus-visible,
+        .metric-preference-drag-handle:focus-visible,
+        .metric-preference-move:focus-visible {
+            outline: 2px solid var(--accent-blue);
+            outline-offset: 2px;
+        }
+
+        .metric-preference-drag-handle,
+        .metric-preference-move {
+            min-width: 28px;
+            min-height: 28px;
+            padding: 0.2rem;
+            color: var(--text-secondary);
+            background: transparent;
+            border: 1px solid var(--border-color);
+            border-radius: var(--radius-sm);
+            cursor: pointer;
+        }
+
+        .metric-preference-label {
+            min-width: 0;
+            display: flex;
+            flex-direction: column;
+            gap: 0.15rem;
+            font-size: 0.8rem;
+        }
+
+        .metric-preference-key {
+            overflow: hidden;
+            color: var(--text-muted);
+            font-size: 0.68rem;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .metric-preference-toggle {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.25rem;
+            font-size: 0.7rem;
+        }
+
+        .metric-preference-empty,
+        .metric-preference-help {
+            color: var(--text-muted);
+            font-size: 0.75rem;
+        }
+
+        .metric-preference-error {
+            margin-bottom: 0.75rem;
+            padding: 0.625rem;
+            color: var(--accent-red);
+            font-size: 0.75rem;
+            border: 1px solid rgba(239, 68, 68, 0.5);
+            border-radius: var(--radius-sm);
+        }
+
+        .metric-preference-actions {
+            display: flex;
+            justify-content: flex-end;
+            gap: 0.5rem;
+            margin-top: 0.75rem;
+        }
+
+        .metric-preference-actions button {
+            padding: 0.5rem 0.75rem;
+            border: 1px solid var(--border-color);
+            border-radius: var(--radius-sm);
+            color: var(--text-primary);
+            background: var(--bg-card);
+            cursor: pointer;
+        }
+
+        .metric-preference-actions button.primary {
+            color: white;
+            border-color: var(--accent-blue);
+            background: var(--accent-blue);
+        }
+
+        .metric-preference-actions button:disabled {
+            cursor: not-allowed;
+            opacity: 0.55;
+        }
+
+        .sr-only {
+            position: absolute;
+            width: 1px;
+            height: 1px;
+            padding: 0;
+            margin: -1px;
+            overflow: hidden;
+            clip: rect(0, 0, 0, 0);
+            white-space: nowrap;
+            border: 0;
+        }
         
         .drawer-overlay {
             position: fixed;
@@ -753,6 +896,22 @@
                     로딩 중...
                 </div>
             </div>
+
+            <!-- Server-wide Metric Preferences -->
+            <div id="metricPreferenceEditor" class="setting-section">
+                <h3>📐 사용량 항목 관리</h3>
+                <p class="metric-preference-help">카드와 그래프에 표시할 항목과 순서를 서버 전체에 적용합니다.</p>
+                <div id="metricPreferenceError" class="metric-preference-error" role="alert" hidden></div>
+                <button id="metricPreferenceLatestButton" type="button" onclick="loadLatestMetricPreferences()" hidden>
+                    최신 설정 불러오기
+                </button>
+                <div id="metricPreferenceProviders" aria-busy="false">설정 drawer를 열면 불러옵니다.</div>
+                <div class="metric-preference-actions">
+                    <button id="metricPreferenceCancelButton" type="button" onclick="cancelMetricPreferenceChanges()">취소</button>
+                    <button id="metricPreferenceSaveButton" class="primary" type="button" onclick="saveMetricPreferences()" disabled>저장</button>
+                </div>
+                <div id="metricPreferenceStatus" class="sr-only" role="status" aria-live="polite"></div>
+            </div>
         </div>
     </div>
     <div id="drawerOverlay" class="drawer-overlay" onclick="toggleDrawer()"></div>
@@ -817,13 +976,23 @@
         }
         
         // Settings Drawer
+        let drawerProviderMetadata = new Map();
+        let metricPreferenceSource = [];
+        let metricPreferenceDraft = [];
+        let metricPreferenceSaving = false;
+        let metricPreferenceConflict = false;
+        let draggedMetricPreference = null;
+
         function toggleDrawer() {
             const drawer = document.getElementById('settingsDrawer');
             const overlay = document.getElementById('drawerOverlay');
+            const opening = !drawer.classList.contains('open');
             drawer.classList.toggle('open');
             overlay.classList.toggle('open');
-            if (drawer.classList.contains('open')) {
-                loadDrawerProviders();
+            if (opening) {
+                loadDrawerProviders().then(() => loadMetricPreferences());
+            } else {
+                cancelMetricPreferenceChanges();
             }
         }
         
@@ -865,7 +1034,13 @@
                 const resp = await fetch('/api/providers');
                 if (!resp.ok) throw new Error('providers API 실패');
                 const data = await resp.json();
-                renderDrawerProviders(data.providers || []);
+                const providers = data.providers || [];
+                drawerProviderMetadata = new Map(providers.map(provider => [
+                    provider.provider_id || provider.name,
+                    provider
+                ]));
+                renderDrawerProviders(providers);
+                renderMetricPreferenceProviders();
             } catch (e) {
                 document.getElementById('drawerProviderCards').innerHTML =
                     '<div style="color: var(--accent-red); font-size: 0.875rem;">Provider 목록을 불러올 수 없습니다</div>';
@@ -899,6 +1074,339 @@
                     </button>
                 </div>`;
             }).join('');
+        }
+
+        function cloneMetricPreferenceProviders(providers) {
+            return (providers || []).map(provider => ({
+                provider_id: String(provider.provider_id || ''),
+                version: Number(provider.version || 0),
+                items: (provider.items || []).map(item => ({
+                    metric: String(item.metric || ''),
+                    label: String(item.label || item.metric || ''),
+                    visible: Boolean(item.visible),
+                    available: Boolean(item.available)
+                }))
+            }));
+        }
+
+        function metricPreferenceComparable(providers) {
+            return (providers || []).map(provider => ({
+                provider_id: provider.provider_id,
+                version: provider.version,
+                items: provider.items.map(item => ({ metric: item.metric, visible: item.visible }))
+            }));
+        }
+
+        function metricPreferenceHasChanges() {
+            return JSON.stringify(metricPreferenceComparable(metricPreferenceSource)) !==
+                JSON.stringify(metricPreferenceComparable(metricPreferenceDraft));
+        }
+
+        function announceMetricPreference(message) {
+            const status = document.getElementById('metricPreferenceStatus');
+            if (status) status.textContent = message;
+        }
+
+        function showMetricPreferenceError(message, showLatest) {
+            const error = document.getElementById('metricPreferenceError');
+            const latest = document.getElementById('metricPreferenceLatestButton');
+            error.textContent = message;
+            error.hidden = false;
+            latest.hidden = !showLatest;
+        }
+
+        function clearMetricPreferenceError() {
+            const error = document.getElementById('metricPreferenceError');
+            const latest = document.getElementById('metricPreferenceLatestButton');
+            error.textContent = '';
+            error.hidden = true;
+            latest.hidden = true;
+        }
+
+        async function loadMetricPreferences() {
+            const container = document.getElementById('metricPreferenceProviders');
+            container.setAttribute('aria-busy', 'true');
+            container.textContent = '사용량 항목을 불러오는 중...';
+            try {
+                const response = await fetch('/api/metric-preferences');
+                if (!response.ok) throw new Error('metric preference API 실패');
+                const data = await response.json();
+                metricPreferenceSource = cloneMetricPreferenceProviders(data.providers);
+                metricPreferenceDraft = cloneMetricPreferenceProviders(data.providers);
+                metricPreferenceConflict = false;
+                clearMetricPreferenceError();
+                renderMetricPreferenceProviders();
+            } catch (error) {
+                showMetricPreferenceError('사용량 항목 설정을 불러오지 못했습니다.', false);
+                if (metricPreferenceDraft.length) {
+                    renderMetricPreferenceProviders();
+                } else {
+                    container.textContent = '설정을 불러올 수 없습니다.';
+                }
+            } finally {
+                container.setAttribute('aria-busy', 'false');
+            }
+        }
+
+        function renderMetricPreferenceProviders() {
+            const container = document.getElementById('metricPreferenceProviders');
+            if (!container) return;
+            container.replaceChildren();
+
+            if (!metricPreferenceDraft.length) {
+                const empty = document.createElement('p');
+                empty.className = 'metric-preference-empty';
+                empty.textContent = '등록된 Provider가 없습니다.';
+                container.appendChild(empty);
+                updateMetricPreferenceButtons();
+                return;
+            }
+
+            metricPreferenceDraft.forEach(provider => {
+                const section = document.createElement('section');
+                section.className = 'metric-preference-provider';
+
+                const header = document.createElement('div');
+                header.className = 'metric-preference-provider-header';
+                const title = document.createElement('h4');
+                title.className = 'metric-preference-provider-title';
+                const metadata = drawerProviderMetadata.get(provider.provider_id);
+                title.textContent = metadata?.display_name || provider.provider_id;
+                header.appendChild(title);
+                if (metadata && !metadata.enabled) {
+                    const state = document.createElement('span');
+                    state.className = 'metric-preference-provider-state';
+                    state.textContent = '비활성 Provider';
+                    header.appendChild(state);
+                }
+                section.appendChild(header);
+
+                const list = document.createElement('div');
+                list.className = 'metric-preference-list';
+                list.setAttribute('role', 'list');
+                const availableItems = provider.items.filter(item => item.available);
+                if (!availableItems.length) {
+                    const empty = document.createElement('p');
+                    empty.className = 'metric-preference-empty';
+                    empty.textContent = '설정할 항목 없음';
+                    list.appendChild(empty);
+                } else {
+                    availableItems.forEach(item => list.appendChild(createMetricPreferenceRow(provider, item)));
+                }
+                section.appendChild(list);
+                container.appendChild(section);
+            });
+            updateMetricPreferenceButtons();
+        }
+
+        function createMetricPreferenceRow(provider, item) {
+            const row = document.createElement('div');
+            row.className = 'metric-preference-row';
+            row.draggable = true;
+            row.tabIndex = -1;
+            row.setAttribute('role', 'listitem');
+            row.dataset.providerId = provider.provider_id;
+            row.dataset.metricKey = item.metric;
+
+            const handle = document.createElement('button');
+            handle.type = 'button';
+            handle.className = 'metric-preference-drag-handle';
+            handle.textContent = '⋮⋮';
+            handle.setAttribute('aria-label', item.label + ' 끌어서 순서 변경');
+            row.appendChild(handle);
+
+            const label = document.createElement('span');
+            label.className = 'metric-preference-label';
+            const labelText = document.createElement('span');
+            labelText.textContent = item.label;
+            const keyText = document.createElement('code');
+            keyText.className = 'metric-preference-key';
+            keyText.textContent = item.metric;
+            label.append(labelText, keyText);
+            row.appendChild(label);
+
+            const toggleLabel = document.createElement('label');
+            toggleLabel.className = 'metric-preference-toggle';
+            const toggle = document.createElement('input');
+            toggle.type = 'checkbox';
+            toggle.checked = item.visible;
+            toggle.setAttribute('aria-label', item.label + ' 표시');
+            toggle.addEventListener('change', () => toggleMetricPreference(provider.provider_id, item.metric, toggle.checked));
+            toggleLabel.append(toggle, document.createTextNode('표시'));
+            row.appendChild(toggleLabel);
+
+            const upButton = document.createElement('button');
+            upButton.type = 'button';
+            upButton.className = 'metric-preference-move';
+            upButton.textContent = '↑';
+            upButton.setAttribute('aria-label', item.label + ' 위로 이동');
+            upButton.addEventListener('click', () => moveMetricPreference(provider.provider_id, item.metric, -1));
+            row.appendChild(upButton);
+
+            const downButton = document.createElement('button');
+            downButton.type = 'button';
+            downButton.className = 'metric-preference-move';
+            downButton.textContent = '↓';
+            downButton.setAttribute('aria-label', item.label + ' 아래로 이동');
+            downButton.addEventListener('click', () => moveMetricPreference(provider.provider_id, item.metric, 1));
+            row.appendChild(downButton);
+
+            row.addEventListener('dragstart', event => {
+                draggedMetricPreference = { providerId: provider.provider_id, metric: item.metric };
+                row.classList.add('dragging');
+                event.dataTransfer.effectAllowed = 'move';
+            });
+            row.addEventListener('dragend', () => {
+                draggedMetricPreference = null;
+                row.classList.remove('dragging');
+            });
+            row.addEventListener('dragover', event => event.preventDefault());
+            row.addEventListener('drop', event => {
+                event.preventDefault();
+                if (!draggedMetricPreference || draggedMetricPreference.providerId !== provider.provider_id) return;
+                reorderMetricPreference(provider.provider_id, draggedMetricPreference.metric, item.metric);
+            });
+            return row;
+        }
+
+        function findMetricPreferenceProvider(providerId) {
+            return metricPreferenceDraft.find(provider => provider.provider_id === providerId);
+        }
+
+        function focusMetricPreferenceRow(providerId, metric) {
+            requestAnimationFrame(() => {
+                const rows = document.querySelectorAll('.metric-preference-row');
+                const row = Array.from(rows).find(candidate =>
+                    candidate.dataset.providerId === providerId && candidate.dataset.metricKey === metric);
+                if (row) row.focus();
+            });
+        }
+
+        function moveMetricPreference(providerId, metric, direction) {
+            const provider = findMetricPreferenceProvider(providerId);
+            if (!provider) return;
+            const availableIndexes = provider.items
+                .map((item, index) => item.available ? index : -1)
+                .filter(index => index >= 0);
+            const currentPosition = availableIndexes.findIndex(index => provider.items[index].metric === metric);
+            const targetPosition = currentPosition + direction;
+            if (currentPosition < 0 || targetPosition < 0 || targetPosition >= availableIndexes.length) return;
+            const currentIndex = availableIndexes[currentPosition];
+            const targetIndex = availableIndexes[targetPosition];
+            [provider.items[currentIndex], provider.items[targetIndex]] =
+                [provider.items[targetIndex], provider.items[currentIndex]];
+            clearMetricPreferenceError();
+            renderMetricPreferenceProviders();
+            announceMetricPreference(`${provider.items[targetIndex].label} 순서를 변경했습니다.`);
+            focusMetricPreferenceRow(providerId, metric);
+        }
+
+        function reorderMetricPreference(providerId, sourceMetric, targetMetric) {
+            if (sourceMetric === targetMetric) return;
+            const provider = findMetricPreferenceProvider(providerId);
+            if (!provider) return;
+            const availableIndexes = provider.items
+                .map((item, index) => item.available ? index : -1)
+                .filter(index => index >= 0);
+            const availableItems = availableIndexes.map(index => provider.items[index]);
+            const sourceIndex = availableItems.findIndex(item => item.metric === sourceMetric);
+            const targetIndex = availableItems.findIndex(item => item.metric === targetMetric);
+            if (sourceIndex < 0 || targetIndex < 0) return;
+            const [moved] = availableItems.splice(sourceIndex, 1);
+            availableItems.splice(targetIndex, 0, moved);
+            availableIndexes.forEach((slot, index) => { provider.items[slot] = availableItems[index]; });
+            clearMetricPreferenceError();
+            renderMetricPreferenceProviders();
+            announceMetricPreference(`${moved.label} 순서를 변경했습니다.`);
+            focusMetricPreferenceRow(providerId, sourceMetric);
+        }
+
+        function toggleMetricPreference(providerId, metric, visible) {
+            const provider = findMetricPreferenceProvider(providerId);
+            if (!provider) return;
+            const item = provider.items.find(candidate => candidate.metric === metric && candidate.available);
+            if (!item) return;
+            const visibleCount = provider.items.filter(candidate => candidate.available && candidate.visible).length;
+            if (!visible && item.visible && visibleCount <= 1) {
+                showMetricPreferenceError('최소 한 개의 사용량 항목은 표시해야 합니다.', false);
+                announceMetricPreference('마지막 표시 항목은 숨길 수 없습니다.');
+                renderMetricPreferenceProviders();
+                focusMetricPreferenceRow(providerId, metric);
+                return;
+            }
+            item.visible = visible;
+            clearMetricPreferenceError();
+            updateMetricPreferenceButtons();
+            announceMetricPreference(`${item.label} 표시 설정을 변경했습니다.`);
+        }
+
+        function cancelMetricPreferenceChanges() {
+            metricPreferenceDraft = cloneMetricPreferenceProviders(metricPreferenceSource);
+            metricPreferenceConflict = false;
+            clearMetricPreferenceError();
+            renderMetricPreferenceProviders();
+            announceMetricPreference('저장하지 않은 변경을 취소했습니다.');
+        }
+
+        function updateMetricPreferenceButtons() {
+            const saveButton = document.getElementById('metricPreferenceSaveButton');
+            const cancelButton = document.getElementById('metricPreferenceCancelButton');
+            if (saveButton) saveButton.disabled = metricPreferenceSaving || !metricPreferenceHasChanges();
+            if (cancelButton) cancelButton.disabled = metricPreferenceSaving;
+        }
+
+        async function saveMetricPreferences() {
+            if (metricPreferenceSaving) return;
+            const sourceByProvider = new Map(metricPreferenceSource.map(provider => [provider.provider_id, provider]));
+            const changedProviders = metricPreferenceDraft.filter(provider => {
+                const source = sourceByProvider.get(provider.provider_id);
+                return JSON.stringify(metricPreferenceComparable([provider])) !==
+                    JSON.stringify(metricPreferenceComparable(source ? [source] : []));
+            });
+            if (!changedProviders.length) {
+                announceMetricPreference('저장할 변경이 없습니다.');
+                return;
+            }
+
+            metricPreferenceSaving = true;
+            updateMetricPreferenceButtons();
+            clearMetricPreferenceError();
+            const payload = {
+                providers: changedProviders.map(provider => ({
+                    provider_id: provider.provider_id,
+                    expected_version: provider.version,
+                    items: provider.items.map(item => ({ metric: item.metric, visible: item.visible }))
+                }))
+            };
+
+            try {
+                const response = await fetch('/api/metric-preferences', {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                const data = await response.json().catch(() => ({}));
+                if (response.status === 409) {
+                    metricPreferenceConflict = true;
+                    showMetricPreferenceError('다른 곳에서 설정이 변경되었습니다. 현재 draft는 유지됩니다.', true);
+                    return;
+                }
+                if (!response.ok) {
+                    showMetricPreferenceError('설정을 저장하지 못했습니다. 항목을 확인한 뒤 다시 시도해 주세요.', false);
+                    return;
+                }
+                window.location.reload();
+            } catch (error) {
+                showMetricPreferenceError('네트워크 오류로 설정을 저장하지 못했습니다. 현재 draft는 유지됩니다.', false);
+            } finally {
+                metricPreferenceSaving = false;
+                updateMetricPreferenceButtons();
+            }
+        }
+
+        function loadLatestMetricPreferences() {
+            if (!metricPreferenceConflict) return;
+            loadMetricPreferences();
         }
         
         async function toggleProviderInDrawer(name, action) {

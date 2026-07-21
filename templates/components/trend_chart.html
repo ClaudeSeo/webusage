@@ -424,21 +424,31 @@ function calculateMovingAverage(values, windowSize) {
     return result;
 }
 
+function reconcileProviderMetricSelections(data) {
+    Object.entries(data).forEach(([name, providerObj]) => {
+        const availableMetrics = Array.isArray(providerObj.available_metrics)
+            ? providerObj.available_metrics
+            : [];
+        const currentSelection = providerMetricSelections[name];
+        const currentSelectionIsVisible = availableMetrics.includes(currentSelection);
+        const primaryMetricIsVisible = availableMetrics.includes(providerObj.primary_metric);
+
+        providerMetricSelections[name] = currentSelectionIsVisible
+            ? currentSelection
+            : (primaryMetricIsVisible ? providerObj.primary_metric : null);
+    });
+}
+
 function renderProviderFilters(data) {
     const container = document.getElementById('providerFilters');
     const providers = Object.keys(data);
+
+    reconcileProviderMetricSelections(data);
 
     if (providers.length === 0) {
         container.innerHTML = '';
         return;
     }
-
-    // provider별 기본 metric 선택값 초기화 (null로 저장해 ?? 연산자가 올바르게 동작하도록)
-    providers.forEach(name => {
-        if (providerMetricSelections[name] === undefined) {
-            providerMetricSelections[name] = data[name].primary_metric || null;
-        }
-    });
 
     let html = `<div class="provider-chip active" data-provider="all">
         <span>전체</span>
@@ -530,34 +540,18 @@ async function loadTrendData(range = '5h') {
         renderTrendChart(data, range);
     } catch (error) {
         console.error('추이 데이터 로드 오류:', error);
-        const container = document.querySelector('.trend-chart-container');
-        if (container) {
-            const canvasWrapper = container.querySelector('.trend-chart-canvas-wrapper');
-            if (canvasWrapper) {
-                canvasWrapper.innerHTML = `<div class="trend-chart-empty">
-                    <div class="trend-chart-empty-icon">📊</div>
-                    <div class="trend-chart-empty-text">데이터를 불러올 수 없습니다</div>
-                    <div class="trend-chart-empty-hint">잠시 후 다시 시도해주세요</div>
-                </div>`;
-            }
-        }
+        showTrendChartEmptyState('데이터를 불러올 수 없습니다', '잠시 후 다시 시도해주세요');
     }
 }
 
 function renderTrendChart(data, range) {
-    const ctx = document.getElementById('trendChart').getContext('2d');
-    
     // Filter providers if specific one selected
     const providers = currentProviderFilter === 'all' 
         ? Object.keys(data) 
         : [currentProviderFilter].filter(p => data[p]);
     
     if (providers.length === 0) {
-        const canvasWrapper = document.querySelector('.trend-chart-canvas-wrapper');
-        canvasWrapper.innerHTML = `<div class="trend-chart-empty">
-            <div class="trend-chart-empty-icon">📊</div>
-            <div class="trend-chart-empty-text">표시할 데이터가 없습니다</div>
-        </div>`;
+        showTrendChartEmptyState('표시할 데이터가 없습니다');
         return;
     }
     
@@ -575,6 +569,13 @@ function renderTrendChart(data, range) {
     });
     
     const sortedLabels = Array.from(allTimestamps).sort((a, b) => new Date(a) - new Date(b));
+
+    if (sortedLabels.length === 0) {
+        showTrendChartEmptyState('선택한 항목에 표시할 데이터가 없습니다',
+            '다른 항목을 선택하거나 기간을 변경해 주세요'
+        );
+        return;
+    }
     
     // Build datasets
     const datasets = [];
@@ -704,6 +705,7 @@ function renderTrendChart(data, range) {
     });
     
     // Create chart
+    const ctx = ensureTrendChartCanvas().getContext('2d');
     trendChartInstance = new Chart(ctx, {
         type: 'bar',
         data: {
@@ -811,6 +813,46 @@ function renderTrendChart(data, range) {
             }
         }
     });
+}
+
+function ensureTrendChartCanvas() {
+    const canvasWrapper = document.querySelector('.trend-chart-canvas-wrapper');
+    let canvas = canvasWrapper.querySelector('#trendChart');
+    if (!canvas) {
+        canvas = document.createElement('canvas');
+        canvas.id = 'trendChart';
+        canvasWrapper.replaceChildren(canvas);
+    }
+    return canvas;
+}
+
+function showTrendChartEmptyState(message, hint = '') {
+    if (trendChartInstance) {
+        trendChartInstance.destroy();
+        trendChartInstance = null;
+    }
+
+    const emptyState = document.createElement('div');
+    emptyState.className = 'trend-chart-empty';
+
+    const icon = document.createElement('div');
+    icon.className = 'trend-chart-empty-icon';
+    icon.textContent = '📊';
+    emptyState.appendChild(icon);
+
+    const text = document.createElement('div');
+    text.className = 'trend-chart-empty-text';
+    text.textContent = message;
+    emptyState.appendChild(text);
+
+    if (hint) {
+        const hintText = document.createElement('div');
+        hintText.className = 'trend-chart-empty-hint';
+        hintText.textContent = hint;
+        emptyState.appendChild(hintText);
+    }
+
+    document.querySelector('.trend-chart-canvas-wrapper').replaceChildren(emptyState);
 }
 
 // Initialize chart on page load

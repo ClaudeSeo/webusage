@@ -29,7 +29,7 @@ type Server struct {
 	mux         *nethttp.ServeMux
 	tmpl        *template.Template
 	templateDir string
-	title        string
+	title       string
 }
 
 // NewServer creates a new HTTP server. templateDir은 옵션 — 빈 문자열이면 "templates" 기본값 사용
@@ -246,6 +246,8 @@ func (s *Server) handleDashboard(w nethttp.ResponseWriter, r *nethttp.Request) {
 				view.TimeRemaining = domain.FormatDuration(cycleEnd.Sub(now))
 			}
 
+			metricViews := make(map[string]domain.MetricView, len(snapshots))
+			catalog := make([]string, 0, len(snapshots))
 			for _, snap := range snapshots {
 				mv := domain.MetricView{
 					Name:  snap.Metric,
@@ -264,7 +266,21 @@ func (s *Server) handleDashboard(w nethttp.ResponseWriter, r *nethttp.Request) {
 				if snap.CollectedAt.After(view.CollectedAt) {
 					view.CollectedAt = snap.CollectedAt
 				}
-				view.Metrics = append(view.Metrics, mv)
+				catalog = append(catalog, snap.Metric)
+				metricViews[snap.Metric] = mv
+			}
+
+			preference, err := s.store.GetMetricPreference(p.ID)
+			if err != nil {
+				s.logger.Error("Failed to load dashboard metric preference", "provider", p.Name, "error", err)
+				nethttp.Error(w, "Internal server error", nethttp.StatusInternalServerError)
+				return
+			}
+			for _, item := range domain.ReconcileMetricPreferences(preference.Items, catalog) {
+				if !item.Available || !item.Visible {
+					continue
+				}
+				view.Metrics = append(view.Metrics, metricViews[item.Metric])
 			}
 		}
 
@@ -402,14 +418,18 @@ func (s *Server) handleHealthz(w nethttp.ResponseWriter, r *nethttp.Request) {
 // jsonResponse sends a JSON response
 func (s *Server) jsonResponse(w nethttp.ResponseWriter, data interface{}) {
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(data)
+	if err := json.NewEncoder(w).Encode(data); err != nil {
+		s.logger.Error("Failed to encode JSON response", "error", err)
+	}
 }
 
 // jsonError sends a JSON error response
 func (s *Server) jsonError(w nethttp.ResponseWriter, message string, status int) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(map[string]string{"error": message})
+	if err := json.NewEncoder(w).Encode(map[string]string{"error": message}); err != nil {
+		s.logger.Error("Failed to encode JSON error response", "error", err)
+	}
 }
 
 // setupRoutes configures all HTTP routes
@@ -426,6 +446,7 @@ func (s *Server) setupRoutes() {
 	s.mux.HandleFunc("/api/forecast", s.handleAPIForecast)
 	s.mux.HandleFunc("/api/providers", s.handleAPIProvidersMeta)
 	s.mux.HandleFunc("/api/providers/", s.handleProviderAction)
+	s.mux.HandleFunc("/api/metric-preferences", s.handleMetricPreferences)
 	s.mux.HandleFunc("/api/heatmap", s.handleAPIHeatmap)
 	s.mux.HandleFunc("/api/collect", s.handleCollect)
 	s.mux.HandleFunc("/healthz", s.handleHealthz)
@@ -454,7 +475,9 @@ func (s *Server) Start(ctx context.Context) error {
 		s.logger.Info("Shutting down HTTP server")
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		server.Shutdown(shutdownCtx)
+		if err := server.Shutdown(shutdownCtx); err != nil {
+			s.logger.Error("Failed to shut down HTTP server", "error", err)
+		}
 	}()
 
 	s.logger.Info("Starting HTTP server", "address", addr)

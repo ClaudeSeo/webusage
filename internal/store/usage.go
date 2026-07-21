@@ -43,7 +43,7 @@ func (s *Store) CreateUsageSnapshots(snapshots []*UsageSnapshot) error {
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 
 	stmt, err := tx.Prepare(`
 		INSERT INTO usage_snapshots
@@ -53,7 +53,7 @@ func (s *Store) CreateUsageSnapshots(snapshots []*UsageSnapshot) error {
 	if err != nil {
 		return err
 	}
-	defer stmt.Close()
+	defer func() { _ = stmt.Close() }()
 
 	for _, snap := range snapshots {
 		_, err := stmt.Exec(
@@ -75,7 +75,7 @@ func (s *Store) CreateUsageSnapshotsIdempotent(snapshots []*UsageSnapshot) error
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 
 	stmt, err := tx.Prepare(`
 		INSERT OR IGNORE INTO usage_snapshots
@@ -85,7 +85,7 @@ func (s *Store) CreateUsageSnapshotsIdempotent(snapshots []*UsageSnapshot) error
 	if err != nil {
 		return err
 	}
-	defer stmt.Close()
+	defer func() { _ = stmt.Close() }()
 
 	for _, snap := range snapshots {
 		// Round collected_at to nearest second for idempotency comparison
@@ -159,7 +159,7 @@ func (s *Store) GetLatestUsageByProvider(providerID int64) ([]*UsageSnapshot, er
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var snapshots []*UsageSnapshot
 	for rows.Next() {
@@ -218,7 +218,7 @@ func (s *Store) GetUsageTrends(providerID int64, metric string, startTime, endTi
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var snapshots []*UsageSnapshot
 	for rows.Next() {
@@ -336,7 +336,7 @@ func (s *Store) GetHeatmapData(providerID int64, startTime, endTime time.Time) (
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	// Build date → value map
 	dateMap := make(map[string]float64)

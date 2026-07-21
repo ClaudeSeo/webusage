@@ -66,7 +66,7 @@ func (c *Client) GetAllUsage() ([]UsageSnapshot, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch usage: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("unexpected status code: %d", resp.StatusCode)
@@ -91,7 +91,7 @@ func (c *Client) GetProviderUsage(providerID string) (*UsageSnapshot, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch usage for %s: %w", providerID, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode == http.StatusNoContent {
 		// Provider exists but has no cached data
@@ -126,8 +126,8 @@ func (c *Client) IsHealthy() bool {
 		return false
 	}
 	defer func() {
-		io.Copy(io.Discard, resp.Body)
-		resp.Body.Close()
+		_, _ = io.Copy(io.Discard, resp.Body)
+		_ = resp.Body.Close()
 	}()
 	return resp.StatusCode == http.StatusOK
 }

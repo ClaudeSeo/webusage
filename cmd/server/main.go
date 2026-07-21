@@ -41,7 +41,11 @@ func main() {
 		logger.Error("Failed to initialize database", "error", err)
 		os.Exit(1)
 	}
-	defer s.Close()
+	defer func() {
+		if err := s.Close(); err != nil {
+			logger.Error("Failed to close database", "error", err)
+		}
+	}()
 
 	logger.Info("Database initialized with WAL mode")
 
@@ -93,7 +97,7 @@ func main() {
 
 	go func() {
 		if err := coll.Start(ctx); err != nil {
-			errChan <- fmt.Errorf("Collector: %w", err)
+			errChan <- fmt.Errorf("collector: %w", err)
 		}
 	}()
 

@@ -21,13 +21,13 @@ func NewStore(dbPath string) (*Store, error) {
 
 	// Configure SQLite for concurrent access
 	if err := configureDB(db); err != nil {
-		db.Close()
+		_ = db.Close()
 		return nil, err
 	}
 
 	// Initialize schema
 	if err := initSchema(db); err != nil {
-		db.Close()
+		_ = db.Close()
 		return nil, err
 	}
 
@@ -82,6 +82,14 @@ func initSchema(db *sql.DB) error {
 		reset_at DATETIME,
 		collected_at DATETIME NOT NULL,
 		raw_json TEXT,
+		FOREIGN KEY (provider_id) REFERENCES providers(id) ON DELETE CASCADE
+	);
+
+	CREATE TABLE IF NOT EXISTS provider_metric_preferences (
+		provider_id INTEGER PRIMARY KEY,
+		items_json TEXT NOT NULL,
+		version INTEGER NOT NULL CHECK (version >= 1),
+		updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
 		FOREIGN KEY (provider_id) REFERENCES providers(id) ON DELETE CASCADE
 	);
 

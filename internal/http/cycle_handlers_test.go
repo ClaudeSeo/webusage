@@ -32,10 +32,7 @@ func setupTestServerForCycle(t *testing.T) (*Server, func()) {
 	}
 
 	cleanup := func() {
-		s.Close()
-		os.Remove(tmpFile)
-		os.Remove(tmpFile + "-wal")
-		os.Remove(tmpFile + "-shm")
+		cleanupHTTPTestStore(t, s, tmpFile)
 	}
 
 	return server, cleanup
@@ -47,8 +44,8 @@ func TestCycleAware_Current(t *testing.T) {
 	defer cleanup()
 
 	// Setup test providers
-	claudeID, _ := server.store.CreateProvider("claude", `{}`)
-	copilotID, _ := server.store.CreateProvider("copilot", `{}`)
+	claudeID := mustCreateHTTPTestProvider(t, server, "claude", `{}`)
+	copilotID := mustCreateHTTPTestProvider(t, server, "copilot", `{}`)
 	now := time.Now()
 
 	// Insert test usage data for claude (rolling_5h cycle)
@@ -60,7 +57,7 @@ func TestCycleAware_Current(t *testing.T) {
 		ResetAt:     timePtr(now.Add(2 * time.Hour)),
 		CollectedAt: now,
 	}
-	server.store.CreateUsageSnapshot(claudeSnapshot)
+	mustCreateHTTPTestSnapshot(t, server, claudeSnapshot)
 
 	// Insert test usage data for copilot (monthly cycle)
 	copilotSnapshot := &store.UsageSnapshot{
@@ -71,7 +68,7 @@ func TestCycleAware_Current(t *testing.T) {
 		ResetAt:     timePtr(now.Add(30 * 24 * time.Hour)),
 		CollectedAt: now,
 	}
-	server.store.CreateUsageSnapshot(copilotSnapshot)
+	mustCreateHTTPTestSnapshot(t, server, copilotSnapshot)
 
 	// Test the endpoint
 	req := httptest.NewRequest(http.MethodGet, "/api/current", nil)
@@ -122,7 +119,7 @@ func TestCycleAware_Trends(t *testing.T) {
 	defer cleanup()
 
 	// Setup test provider
-	claudeID, _ := server.store.CreateProvider("claude", `{}`)
+	claudeID := mustCreateHTTPTestProvider(t, server, "claude", `{}`)
 	now := time.Now()
 
 	// Insert trend data
@@ -133,7 +130,7 @@ func TestCycleAware_Trends(t *testing.T) {
 			Used:        float64(i * 10),
 			CollectedAt: now.Add(-time.Duration(5-i) * time.Hour),
 		}
-		server.store.CreateUsageSnapshot(snapshot)
+		mustCreateHTTPTestSnapshot(t, server, snapshot)
 	}
 
 	testCases := []struct {
@@ -205,7 +202,7 @@ func TestCycleAware_Trends_NoProviderID(t *testing.T) {
 	defer cleanup()
 
 	// Setup test provider
-	claudeID, _ := server.store.CreateProvider("claude", `{}`)
+	claudeID := mustCreateHTTPTestProvider(t, server, "claude", `{}`)
 	snapshot := &store.UsageSnapshot{
 		ProviderID:  claudeID,
 		Metric:      "session",
@@ -213,7 +210,7 @@ func TestCycleAware_Trends_NoProviderID(t *testing.T) {
 		Limit:       floatPtr(100.0),
 		CollectedAt: time.Now(),
 	}
-	server.store.CreateUsageSnapshot(snapshot)
+	mustCreateHTTPTestSnapshot(t, server, snapshot)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/trends?range=24h", nil)
 	w := httptest.NewRecorder()
@@ -240,7 +237,7 @@ func TestCycleAware_Trends_AllProvidersRangeWindow(t *testing.T) {
 	server, cleanup := setupTestServerForCycle(t)
 	defer cleanup()
 
-	claudeID, _ := server.store.CreateProvider("claude", `{}`)
+	claudeID := mustCreateHTTPTestProvider(t, server, "claude", `{}`)
 	now := time.Now().UTC()
 
 	snapshots := []*store.UsageSnapshot{
@@ -265,7 +262,7 @@ func TestCycleAware_Trends_AllProvidersRangeWindow(t *testing.T) {
 	}
 
 	for _, snapshot := range snapshots {
-		server.store.CreateUsageSnapshot(snapshot)
+		mustCreateHTTPTestSnapshot(t, server, snapshot)
 	}
 
 	type metricTrendData struct {
@@ -324,7 +321,7 @@ func TestCycleAware_Forecast(t *testing.T) {
 	defer cleanup()
 
 	// Setup test provider with trend data
-	claudeID, _ := server.store.CreateProvider("claude", `{}`)
+	claudeID := mustCreateHTTPTestProvider(t, server, "claude", `{}`)
 	now := time.Now()
 
 	// Insert trend data for forecasting
@@ -337,7 +334,7 @@ func TestCycleAware_Forecast(t *testing.T) {
 			ResetAt:     timePtr(now.Add(5 * time.Hour)),
 			CollectedAt: now.Add(-time.Duration(10-i) * time.Hour),
 		}
-		server.store.CreateUsageSnapshot(snapshot)
+		mustCreateHTTPTestSnapshot(t, server, snapshot)
 	}
 
 	// Test all providers forecast
@@ -393,7 +390,7 @@ func TestCycleAware_Forecast_SingleProvider(t *testing.T) {
 	defer cleanup()
 
 	// Setup test provider
-	claudeID, _ := server.store.CreateProvider("claude", `{}`)
+	claudeID := mustCreateHTTPTestProvider(t, server, "claude", `{}`)
 	now := time.Now()
 
 	for i := 0; i < 10; i++ {
@@ -405,7 +402,7 @@ func TestCycleAware_Forecast_SingleProvider(t *testing.T) {
 			ResetAt:     timePtr(now.Add(5 * time.Hour)),
 			CollectedAt: now.Add(-time.Duration(10-i) * time.Hour),
 		}
-		server.store.CreateUsageSnapshot(snapshot)
+		mustCreateHTTPTestSnapshot(t, server, snapshot)
 	}
 
 	req := httptest.NewRequest(http.MethodGet, "/api/forecast?provider_id=claude", nil)
@@ -433,8 +430,8 @@ func TestCycleAware_ProvidersMeta(t *testing.T) {
 	defer cleanup()
 
 	// Setup test providers
-	server.store.CreateProvider("claude", `{"auth_method":"oauth_file"}`)
-	server.store.CreateProvider("copilot", `{"auth_method":"keychain"}`)
+	mustCreateHTTPTestProvider(t, server, "claude", `{"auth_method":"oauth_file"}`)
+	mustCreateHTTPTestProvider(t, server, "copilot", `{"auth_method":"keychain"}`)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/providers", nil)
 	w := httptest.NewRecorder()

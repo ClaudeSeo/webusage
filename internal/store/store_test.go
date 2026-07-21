@@ -16,13 +16,33 @@ func setupTestStore(t *testing.T) (*Store, func()) {
 	}
 
 	cleanup := func() {
-		store.Close()
-		os.Remove(tmpFile)
-		os.Remove(tmpFile + "-wal")
-		os.Remove(tmpFile + "-shm")
+		if err := store.Close(); err != nil {
+			t.Errorf("Failed to close test store: %v", err)
+		}
+		for _, path := range []string{tmpFile, tmpFile + "-wal", tmpFile + "-shm"} {
+			if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+				t.Errorf("Failed to remove test database file %q: %v", path, err)
+			}
+		}
 	}
 
 	return store, cleanup
+}
+
+func mustCreateStoreTestProvider(t *testing.T, testStore *Store) int64 {
+	t.Helper()
+	providerID, err := testStore.CreateProvider("test-provider", `{}`)
+	if err != nil {
+		t.Fatalf("Failed to create test provider: %v", err)
+	}
+	return providerID
+}
+
+func mustCreateStoreTestSnapshots(t *testing.T, testStore *Store, snapshots []*UsageSnapshot) {
+	t.Helper()
+	if err := testStore.CreateUsageSnapshots(snapshots); err != nil {
+		t.Fatalf("Failed to create usage snapshots: %v", err)
+	}
 }
 
 func TestNewStore_WALMode(t *testing.T) {
@@ -112,7 +132,10 @@ func TestStore_ProviderCRUD(t *testing.T) {
 	}
 
 	// Verify update
-	p3, _ := store.GetProvider(id)
+	p3, err := store.GetProvider(id)
+	if err != nil {
+		t.Fatalf("Failed to get updated provider: %v", err)
+	}
 	if p3.LastRun == nil {
 		t.Error("Expected LastRun to be set")
 	}
@@ -123,7 +146,10 @@ func TestStore_ProviderCRUD(t *testing.T) {
 		t.Fatalf("Failed to disable provider: %v", err)
 	}
 
-	p4, _ := store.GetProvider(id)
+	p4, err := store.GetProvider(id)
+	if err != nil {
+		t.Fatalf("Failed to get disabled provider: %v", err)
+	}
 	if p4.Enabled {
 		t.Error("Expected provider to be disabled")
 	}
@@ -134,7 +160,10 @@ func TestStore_ProviderCRUD(t *testing.T) {
 		t.Fatalf("Failed to delete provider: %v", err)
 	}
 
-	providers, _ = store.ListProviders()
+	providers, err = store.ListProviders()
+	if err != nil {
+		t.Fatalf("Failed to list providers after deletion: %v", err)
+	}
 	if len(providers) != 0 {
 		t.Errorf("Expected 0 providers after deletion, got %d", len(providers))
 	}
@@ -145,7 +174,7 @@ func TestStore_UsageSnapshotCRUD(t *testing.T) {
 	defer cleanup()
 
 	// Create provider
-	providerID, _ := store.CreateProvider("test-provider", `{}`)
+	providerID := mustCreateStoreTestProvider(t, store)
 
 	now := time.Now()
 	limit := 100000.0
@@ -193,7 +222,7 @@ func TestStore_CreateUsageSnapshots_Batch(t *testing.T) {
 	store, cleanup := setupTestStore(t)
 	defer cleanup()
 
-	providerID, _ := store.CreateProvider("test-provider", `{}`)
+	providerID := mustCreateStoreTestProvider(t, store)
 
 	now := time.Now()
 	snapshots := []*UsageSnapshot{
@@ -208,7 +237,10 @@ func TestStore_CreateUsageSnapshots_Batch(t *testing.T) {
 	}
 
 	// Verify all were created
-	latest, _ := store.GetLatestUsageByProvider(providerID)
+	latest, err := store.GetLatestUsageByProvider(providerID)
+	if err != nil {
+		t.Fatalf("Failed to get latest usage: %v", err)
+	}
 	if len(latest) != 3 {
 		t.Errorf("Expected 3 snapshots, got %d", len(latest))
 	}
@@ -218,7 +250,7 @@ func TestStore_GetUsageTrends(t *testing.T) {
 	store, cleanup := setupTestStore(t)
 	defer cleanup()
 
-	providerID, _ := store.CreateProvider("test-provider", `{}`)
+	providerID := mustCreateStoreTestProvider(t, store)
 
 	now := time.Now()
 	startTime := now.Add(-2 * time.Hour)
@@ -230,7 +262,7 @@ func TestStore_GetUsageTrends(t *testing.T) {
 		{ProviderID: providerID, Metric: "tokens", Used: 3000, CollectedAt: now},
 	}
 
-	store.CreateUsageSnapshots(snapshots)
+	mustCreateStoreTestSnapshots(t, store, snapshots)
 
 	// Get trends
 	trends, err := store.GetUsageTrends(providerID, "tokens", startTime, now)
@@ -252,7 +284,7 @@ func TestStore_GetAggregatedUsage(t *testing.T) {
 	store, cleanup := setupTestStore(t)
 	defer cleanup()
 
-	providerID, _ := store.CreateProvider("test-provider", `{}`)
+	providerID := mustCreateStoreTestProvider(t, store)
 
 	now := time.Now()
 	startTime := now.Add(-time.Hour)
@@ -263,7 +295,7 @@ func TestStore_GetAggregatedUsage(t *testing.T) {
 		{ProviderID: providerID, Metric: "tokens", Used: 2000, CollectedAt: now},
 	}
 
-	store.CreateUsageSnapshots(snapshots)
+	mustCreateStoreTestSnapshots(t, store, snapshots)
 
 	// Get aggregated
 	total, err := store.GetAggregatedUsage(providerID, "tokens", startTime, now.Add(time.Minute))
@@ -281,7 +313,7 @@ func TestStore_DeleteOldUsage(t *testing.T) {
 	store, cleanup := setupTestStore(t)
 	defer cleanup()
 
-	providerID, _ := store.CreateProvider("test-provider", `{}`)
+	providerID := mustCreateStoreTestProvider(t, store)
 
 	oldTime := time.Now().Add(-24 * time.Hour)
 	newTime := time.Now()
@@ -292,7 +324,7 @@ func TestStore_DeleteOldUsage(t *testing.T) {
 		{ProviderID: providerID, Metric: "tokens", Used: 2000, CollectedAt: newTime},
 	}
 
-	store.CreateUsageSnapshots(snapshots)
+	mustCreateStoreTestSnapshots(t, store, snapshots)
 
 	// Delete old data
 	cutoff := time.Now().Add(-12 * time.Hour)
@@ -306,7 +338,10 @@ func TestStore_DeleteOldUsage(t *testing.T) {
 	}
 
 	// Verify only new data remains
-	remaining, _ := store.GetLatestUsage(providerID, "tokens")
+	remaining, err := store.GetLatestUsage(providerID, "tokens")
+	if err != nil {
+		t.Fatalf("Failed to get remaining usage: %v", err)
+	}
 	if remaining == nil || remaining.Used != 2000 {
 		t.Error("Expected only new data to remain")
 	}

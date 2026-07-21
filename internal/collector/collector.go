@@ -120,8 +120,6 @@ func (c *Collector) processSnapshot(ctx context.Context, snapshot openusage.Usag
 			c.logger.Error("Failed to create provider", "provider", providerName, "error", err)
 			return
 		}
-		// Enable it by default since OpenUsage is providing data
-		c.store.EnableProviderByName(providerName, true)
 		dbProvider = &store.Provider{
 			ID:      providerID,
 			Name:    providerName,
