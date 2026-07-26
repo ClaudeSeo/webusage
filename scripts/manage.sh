@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# 심링크 경유 실행 시에도 실제 스크립트 위치를 기준으로 REPO_DIR 계산
+# Resolve REPO_DIR from the real script location even when invoked via symlink
 _SCRIPT="${BASH_SOURCE[0]}"
 while [[ -L "$_SCRIPT" ]]; do
   _SCRIPT="$(readlink "$_SCRIPT")"
@@ -14,19 +14,19 @@ PID_FILE="$DATA_DIR/webusage.pid"
 LOG_FILE="$DATA_DIR/webusage.log"
 BINARY="$REPO_DIR/webusage"
 
-# 명시적 환경변수 > .env > 기본값 순으로 우선순위 적용
-# source 대신 key-value 파서 사용: .env 내 셸 명령어 실행 방지
+# Priority: explicit env vars > .env > defaults
+# Use a key-value parser instead of source: prevent shell command execution from .env
 if [[ -f "$DATA_DIR/.env" ]]; then
   while IFS= read -r line; do
     [[ -z "$line" || "$line" =~ ^[[:space:]]*# ]] && continue
     [[ "$line" =~ ^([A-Za-z_][A-Za-z0-9_]*)=(.*)$ ]] || continue
     local_key="${BASH_REMATCH[1]}"
     local_val="${BASH_REMATCH[2]}"
-    # 앞뒤 따옴표 제거
+    # Strip surrounding quotes
     if [[ "$local_val" =~ ^\"(.*)\"$ || "$local_val" =~ ^\'(.*)\'$ ]]; then
       local_val="${BASH_REMATCH[1]}"
     fi
-    # 이미 설정된 환경변수는 덮어쓰지 않음
+    # Do not overwrite already-set env vars
     [[ "${!local_key+set}" == "set" ]] || export "${local_key}=${local_val}"
   done < "$DATA_DIR/.env"
 fi
@@ -34,12 +34,12 @@ fi
 export DB_PATH="${DB_PATH:-$DATA_DIR/usage.db}"
 
 _ensure_data_dir() {
-  # 다른 로컬 사용자로부터 DB·PID·로그 보호
+  # Protect DB/PID/log from other local users
   mkdir -p -m 0700 "$DATA_DIR"
 }
 
 _safe_path() {
-  # 심링크를 통한 임의 파일 덮어쓰기 방지
+  # Prevent arbitrary file overwrite via symlink
   if [[ -L "$1" ]]; then
     echo "ERROR: 심링크 감지, 중단: $1"
     exit 1
@@ -50,7 +50,7 @@ _is_our_process() {
   local pid="$1"
   local running_name
   running_name="$(ps -p "$pid" -o comm= 2>/dev/null || true)"
-  # macOS 는 ps -o comm= 에서 전체 경로를 반환하는 경우가 있으므로 basename 비교
+  # macOS ps -o comm= may return a full path, so compare basenames
   [[ "$(basename "$running_name")" == "$(basename "$BINARY")" ]]
 }
 
@@ -81,7 +81,7 @@ _stop_existing() {
     fi
   fi
 
-  # PID 파일이 stale 하거나 없으면 binary 경로로 실행 중인 프로세스 탐색
+  # If PID file is stale or missing, search for a running process by binary path
   if [[ -z "$pid" ]]; then
     pid="$(pgrep -f "$BINARY" 2>/dev/null | head -1 || true)"
   fi
@@ -102,16 +102,16 @@ _start_background() {
   _ensure_data_dir
   _safe_path "$LOG_FILE"
   _safe_path "$PID_FILE"
-  # config.LoadConfig()가 godotenv.Load()를 cwd 기준으로 호출하므로 REPO_DIR 에서 실행
+  # Run from REPO_DIR since config.LoadConfig() calls godotenv.Load() relative to cwd
   cd "$REPO_DIR"
-  # DB_PATH 를 nohup 직전에 명시 설정: 쉘 상속 이슈 및 .env 덮어쓰기 방지
+  # Set DB_PATH explicitly right before nohup: avoid shell inheritance issues and .env override
   export DB_PATH="$DATA_DIR/usage.db"
   echo "백그라운드로 실행 중 (데이터: $DATA_DIR)..."
   nohup "$BINARY" >> "$LOG_FILE" 2>&1 &
   local pid=$!
   echo "$pid" > "$PID_FILE"
 
-  # nohup은 항상 성공하므로 즉시 crash 여부를 별도 확인
+  # nohup always succeeds, so check for immediate crash separately
   sleep 0.5
   if ! kill -0 "$pid" 2>/dev/null; then
     echo "ERROR: 프로세스 시작 실패. 로그 확인: $LOG_FILE"
@@ -126,7 +126,7 @@ _start_background() {
 }
 
 _pull_build_start() {
-  # 빌드 성공 후 서비스 중단: 빌드 실패 시 기존 서비스 다운타임 방지
+  # Stop the service only after a successful build: avoid downtime on build failure
   cd "$REPO_DIR" && git pull --ff-only
   _build
   _stop_existing
@@ -162,7 +162,7 @@ cmd_status() {
       return 0
     fi
   fi
-  # PID 파일이 없거나 stale 한 경우 binary 경로로 직접 검색
+  # If PID file is missing or stale, search directly by binary path
   local found_pid
   found_pid="$(pgrep -f "$BINARY" 2>/dev/null | head -1 || true)"
   if [[ -n "$found_pid" ]]; then

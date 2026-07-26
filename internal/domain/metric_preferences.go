@@ -2,13 +2,13 @@ package domain
 
 import "sort"
 
-// MetricPreferenceItem은 저장되는 metric 노출 설정이다.
+// MetricPreferenceItem is the persisted metric visibility setting.
 type MetricPreferenceItem struct {
 	Metric  string `json:"metric"`
 	Visible bool   `json:"visible"`
 }
 
-// ReconciledMetricPreferenceItem은 현재 catalog를 반영한 metric 노출 설정이다.
+// ReconciledMetricPreferenceItem is the metric visibility setting reflecting the current catalog.
 type ReconciledMetricPreferenceItem struct {
 	Metric    string `json:"metric"`
 	Label     string `json:"label"`
@@ -16,7 +16,7 @@ type ReconciledMetricPreferenceItem struct {
 	Available bool   `json:"available"`
 }
 
-// ReconcileMetricPreferences는 저장 설정과 현재 catalog를 표시 가능한 설정으로 합친다.
+// ReconcileMetricPreferences merges saved settings and the current catalog into a displayable setting.
 func ReconcileMetricPreferences(saved []MetricPreferenceItem, catalog []string) []ReconciledMetricPreferenceItem {
 	available := make(map[string]struct{}, len(catalog))
 	for _, metric := range catalog {

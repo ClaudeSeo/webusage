@@ -262,7 +262,7 @@
         <!-- Dynamically populated -->
     </div>
 
-    <!-- Metric Selectors (provider별 표시값 선택) -->
+    <!-- Metric Selectors (per-provider display value selection) -->
     <div id="metricSelectors" class="trend-metric-selectors" style="display:none;">
         <!-- Dynamically populated -->
     </div>
@@ -279,7 +279,7 @@ let currentRange = '{{.Range}}';
 let currentMode = 'cumulative'; // 'delta' or 'cumulative'
 let currentProviderFilter = 'all'; // 'all' or specific provider name
 let trendDataCache = null;
-let providerMetricSelections = {}; // provider별 선택된 metric: { claude: 'session', codex: 'credits', ... }
+let providerMetricSelections = {}; // selected metric per provider: { claude: 'session', codex: 'credits', ... }
 
 // Provider colors (Vercel style - clean white/blue)
 const PROVIDER_COLORS = {
@@ -333,12 +333,12 @@ function setProviderFilter(provider) {
 function setProviderMetric(providerName, metric) {
     providerMetricSelections[providerName] = metric;
 
-    // metric chip active 상태 업데이트
+    // Update metric chip active state
     document.querySelectorAll(`.metric-chip[data-provider="${providerName}"]`).forEach(chip => {
         chip.classList.toggle('active', chip.dataset.metric === metric);
     });
 
-    // 차트 재렌더링
+    // Re-render chart
     if (trendDataCache) {
         renderTrendChart(trendDataCache, currentRange);
     }
@@ -369,8 +369,19 @@ function getSelectedLimit(data, providerName) {
     return metricData ? metricData.limit : null;
 }
 
-function calculateDeltaValues(data, providerName) {
+function normalizeSelectedTrend(data, providerName) {
     const points = getSelectedTrend(data, providerName);
+    const limit = getSelectedLimit(data, providerName);
+    if (!(limit > 0)) return points;
+
+    return points.map(point => ({
+        ...point,
+        value: (point.value / limit) * 100
+    }));
+}
+
+function calculateDeltaValues(data, providerName) {
+    const points = normalizeSelectedTrend(data, providerName);
     if (!points.length) return [];
 
     const deltaPoints = [];
@@ -395,7 +406,7 @@ function calculateDeltaValues(data, providerName) {
 }
 
 function calculateCumulativeValues(data, providerName) {
-    const points = getSelectedTrend(data, providerName);
+    const points = normalizeSelectedTrend(data, providerName);
     return points.map(point => ({
         timestamp: point.timestamp,
         value: point.value,
@@ -476,7 +487,7 @@ function renderMetricSelectors(data) {
         ? Object.keys(data)
         : [currentProviderFilter].filter(p => data[p]);
 
-    // metric 선택지가 없거나 모든 provider가 metric이 1개면 숨김
+    // Hide when there are no metric options or every provider has a single metric
     const hasMultipleMetrics = providers.some(name => {
         const metrics = data[name] && data[name].available_metrics;
         return metrics && metrics.length > 1;
@@ -500,7 +511,7 @@ function renderMetricSelectors(data) {
         const displayName = escapeHtml(providerObj.display_name || name);
         const selectedMetric = providerMetricSelections[name] ?? providerObj.primary_metric;
 
-        // provider마다 한 행씩 구성
+        // Build one row per provider
         html += `<div class="metric-selector-row">`;
         html += `<span class="metric-selector-label">${displayName}</span>`;
         html += `<div class="metric-chips-group">`;
@@ -595,6 +606,7 @@ function renderTrendChart(data, range) {
         const pointMap = new Map(points.map(p => [p.timestamp, p.value]));
         const color = getProviderColor(providerName, index);
         const displayName = providerData.display_name || providerName;
+        const selectedLimit = getSelectedLimit(data, providerName);
         
         const values = sortedLabels.map(label => {
             const val = pointMap.get(label) ?? null;
@@ -602,7 +614,7 @@ function renderTrendChart(data, range) {
             return val;
         });
         
-        // Cumulative: 항상 Line, Delta: 24h/7d → Bar, 30d → Line
+        // Cumulative: always Line, Delta: 24h/7d → Bar, 30d → Line
         const chartType = (currentMode === 'cumulative' || range === '30d') ? 'line' : 'bar';
 
         datasets.push({
@@ -617,6 +629,7 @@ function renderTrendChart(data, range) {
             pointHoverRadius: 5,
             spanGaps: true,
             type: chartType,
+            normalizedToPercent: selectedLimit > 0,
             order: index
         });
         
@@ -639,12 +652,11 @@ function renderTrendChart(data, range) {
             });
         }
         
-        // Track limit for reference lines (metric별 limit 사용)
-        const selectedLimit = getSelectedLimit(data, providerName);
+        // Limited metrics share a percentage scale even when their raw units differ.
         if (selectedLimit && selectedLimit > 0) {
             hasLimit = true;
-            limitValue = Math.max(limitValue, selectedLimit);
-            warningValue = Math.max(warningValue, selectedLimit * 0.8);
+            limitValue = 100;
+            warningValue = 80;
         }
     });
     
@@ -653,7 +665,7 @@ function renderTrendChart(data, range) {
         trendChartInstance.destroy();
     }
     
-    // Y축 최대값 계산: limit이 있으면 정확히 limit 값으로 고정 (5h session, copilot-premium, gemini-pro 등 limit=100인 경우 max=100)
+    // Compute Y-axis max: when a limit exists, pin it to the exact limit value (e.g. 5h session, copilot-premium, gemini-pro have limit=100 → max=100)
     let yAxisMax;
     if (hasLimit) {
         yAxisMax = Math.max(limitValue, maxDataValue * 1.2);
@@ -747,15 +759,14 @@ function renderTrendChart(data, range) {
                             const diff = prevVal != null ? val - prevVal : 0;
                             const diffStr = diff >= 0 ? `+${diff.toFixed(1)}` : diff.toFixed(1);
                             
-                            let label = `${context.dataset.label}: ${val.toFixed(1)}`;
+                            const unit = context.dataset.normalizedToPercent ? '%' : '';
+                            let label = `${context.dataset.label}: ${val.toFixed(1)}${unit}`;
                             if (currentMode === 'delta' && context.dataIndex > 0) {
-                                label += ` (전 대비 ${diffStr})`;
+                                label += ` (전 대비 ${diffStr}${context.dataset.normalizedToPercent ? '%p' : ''})`;
                             }
                             
-                            // Add limit percentage for cumulative mode
-                            if (currentMode === 'cumulative' && hasLimit && limitValue > 0) {
-                                const percent = ((val / limitValue) * 100).toFixed(1);
-                                label += ` | ${percent}% of limit`;
+                            if (currentMode === 'cumulative' && context.dataset.normalizedToPercent) {
+                                label += ' of limit';
                             }
                             
                             return label;
@@ -805,7 +816,9 @@ function renderTrendChart(data, range) {
                     },
                     title: {
                         display: true,
-                        text: currentMode === 'delta' ? '소비량 (Delta)' : '누적 사용량',
+                        text: hasLimit
+                            ? (currentMode === 'delta' ? '사용률 변화 (%p)' : '사용률 (%)')
+                            : (currentMode === 'delta' ? '소비량 (Delta)' : '누적 사용량'),
                         color: '#666666',
                         font: { size: 12 }
                     }
@@ -857,7 +870,7 @@ function showTrendChartEmptyState(message, hint = '') {
 
 // Initialize chart on page load
 document.addEventListener('DOMContentLoaded', function() {
-    // localStorage에 저장된 모드가 있으면 복원, 없으면 기본값 cumulative 유지
+    // Restore mode saved in localStorage, otherwise keep default cumulative
     const savedMode = localStorage.getItem('trendChartMode');
     if (savedMode && savedMode !== currentMode) {
         currentMode = savedMode;

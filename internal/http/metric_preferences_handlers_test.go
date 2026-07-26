@@ -97,7 +97,7 @@ func findMetricPreferenceProvider(t *testing.T, providers []metricPreferenceTest
 }
 
 func TestMetricPreferenceGETShouldReturnCanonicalSettingsForEveryProvider(t *testing.T) {
-	// Given: 저장 순서, unavailable item, 신규 catalog item과 data-less Provider가 있다.
+	// Given: storage order, an unavailable item, a new catalog item, and a data-less Provider exist.
 	server, _ := setupMetricPreferenceTestServer(t)
 	claudeID := createMetricPreferenceProvider(t, server, "claude", "session", "weekly")
 	createMetricPreferenceProvider(t, server, "codex")
@@ -111,10 +111,10 @@ func TestMetricPreferenceGETShouldReturnCanonicalSettingsForEveryProvider(t *tes
 		t.Fatalf("SaveMetricPreferences() error = %v", err)
 	}
 
-	// When: 전체 metric preference를 조회한다.
+	// When: all metric preferences are queried.
 	recorder := performMetricPreferenceRequest(server, nethttp.MethodGet, "")
 
-	// Then: domain label과 availability를 계산한 canonical 설정 및 빈 Provider가 반환된다.
+	// Then: canonical settings with computed domain labels and availability are returned, including empty Providers.
 	if recorder.Code != nethttp.StatusOK {
 		t.Fatalf("GET status = %d, want 200; body=%s", recorder.Code, recorder.Body.String())
 	}
@@ -138,7 +138,7 @@ func TestMetricPreferenceGETShouldReturnCanonicalSettingsForEveryProvider(t *tes
 }
 
 func TestMetricPreferencePUTShouldUpdateOnlySubmittedProvidersAndReturnCanonicalSettings(t *testing.T) {
-	// Given: 신규 catalog metric이 있는 Provider와 별도 저장 설정이 있는 미제출 Provider가 있다.
+	// Given: a Provider with a new catalog metric and an unsubmitted Provider with separately stored settings exist.
 	server, _ := setupMetricPreferenceTestServer(t)
 	claudeID := createMetricPreferenceProvider(t, server, "claude", "weekly", "session", "extra_credits")
 	codexID := createMetricPreferenceProvider(t, server, "codex", "session")
@@ -148,10 +148,10 @@ func TestMetricPreferencePUTShouldUpdateOnlySubmittedProvidersAndReturnCanonical
 	}
 	body := `{"providers":[{"provider_id":"claude","expected_version":0,"items":[{"metric":"weekly","visible":false},{"metric":"session","visible":true}]}]}`
 
-	// When: claude 설정만 저장한다.
+	// When: only the claude settings are saved.
 	recorder := performMetricPreferenceRequest(server, nethttp.MethodPut, body)
 
-	// Then: 새 current metric이 visible로 합성되고 claude만 version 1이 된다.
+	// Then: new current metrics are synthesized as visible, and only claude becomes version 1.
 	if recorder.Code != nethttp.StatusOK {
 		t.Fatalf("PUT status = %d, want 200; body=%s", recorder.Code, recorder.Body.String())
 	}
@@ -185,7 +185,7 @@ func TestMetricPreferencePUTShouldUpdateOnlySubmittedProvidersAndReturnCanonical
 }
 
 func TestMetricPreferencePUTShouldPreserveOmittedUnavailableItemsInTheirSavedSlots(t *testing.T) {
-	// Given: available 항목 사이에 unavailable hidden 항목이 저장되어 있다.
+	// Given: an unavailable hidden item is stored between available items.
 	server, _ := setupMetricPreferenceTestServer(t)
 	providerID := createMetricPreferenceProvider(t, server, "claude", "session", "weekly")
 	storedItems := []domain.MetricPreferenceItem{
@@ -198,10 +198,10 @@ func TestMetricPreferencePUTShouldPreserveOmittedUnavailableItemsInTheirSavedSlo
 	}
 	body := `{"providers":[{"provider_id":"claude","expected_version":1,"items":[{"metric":"weekly","visible":false},{"metric":"session","visible":true}]}]}`
 
-	// When: client가 unavailable 항목을 생략하고 available 항목만 재정렬해 저장한다.
+	// When: the client omits unavailable items and saves only the reordered available items.
 	recorder := performMetricPreferenceRequest(server, nethttp.MethodPut, body)
 
-	// Then: unavailable 항목은 원래 내부 slot과 visibility를 보존한다.
+	// Then: unavailable items preserve their original internal slot and visibility.
 	if recorder.Code != nethttp.StatusOK {
 		t.Fatalf("PUT status = %d, want 200; body=%s", recorder.Code, recorder.Body.String())
 	}
@@ -291,7 +291,7 @@ func TestMetricPreferencePUTShouldRejectInvalidPayloadWithoutChangingState(t *te
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			// Given: version 1 설정과 각 invalid payload가 있다.
+			// Given: a version 1 setting and each invalid payload exist.
 			server, _ := setupMetricPreferenceTestServer(t)
 			claudeID := createMetricPreferenceProvider(t, server, "claude", "session")
 			baselineItems := []domain.MetricPreferenceItem{{Metric: "session", Visible: true}}
@@ -303,10 +303,10 @@ func TestMetricPreferencePUTShouldRejectInvalidPayloadWithoutChangingState(t *te
 				deletedProvider = test.setup(t, server)
 			}
 
-			// When: invalid payload를 제출한다.
+			// When: an invalid payload is submitted.
 			recorder := performMetricPreferenceRequest(server, nethttp.MethodPut, test.body(deletedProvider))
 
-			// Then: HTTP 400이며 기존 설정이 불변이다.
+			// Then: HTTP 400 is returned and the existing setting remains unchanged.
 			if recorder.Code != nethttp.StatusBadRequest {
 				t.Fatalf("PUT status = %d, want 400; body=%s", recorder.Code, recorder.Body.String())
 			}
@@ -322,7 +322,7 @@ func TestMetricPreferencePUTShouldRejectInvalidPayloadWithoutChangingState(t *te
 }
 
 func TestMetricPreferencePUTShouldRollbackAndReturnLatestCanonicalOnVersionConflict(t *testing.T) {
-	// Given: 두 Provider의 version 1 설정과 두 번째 Provider가 stale인 payload가 있다.
+	// Given: version 1 settings for two Providers and a payload where the second Provider is stale.
 	server, logs := setupMetricPreferenceTestServer(t)
 	claudeID := createMetricPreferenceProvider(t, server, "claude", "session", "weekly")
 	codexID := createMetricPreferenceProvider(t, server, "codex", "weekly")
@@ -339,10 +339,10 @@ func TestMetricPreferencePUTShouldRollbackAndReturnLatestCanonicalOnVersionConfl
 	}
 	body := `{"providers":[{"provider_id":"claude","expected_version":1,"items":[{"metric":"session","visible":false},{"metric":"weekly","visible":true}]},{"provider_id":"codex","expected_version":0,"items":[{"metric":"weekly","visible":true}]}]}`
 
-	// When: stale version을 포함한 전체 payload를 저장한다.
+	// When: the full payload containing a stale version is saved.
 	recorder := performMetricPreferenceRequest(server, nethttp.MethodPut, body)
 
-	// Then: 전체 rollback 후 409와 두 Provider의 최신 canonical 설정을 반환하고 payload를 로깅하지 않는다.
+	// Then: after a full rollback, 409 and the latest canonical settings for both Providers are returned, and the payload is not logged.
 	if recorder.Code != nethttp.StatusConflict {
 		t.Fatalf("PUT status = %d, want 409; body=%s", recorder.Code, recorder.Body.String())
 	}

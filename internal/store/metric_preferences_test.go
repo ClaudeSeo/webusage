@@ -10,7 +10,7 @@ import (
 )
 
 func TestMetricPreferenceShouldReturnVersionZeroWhenNoRowExists(t *testing.T) {
-	// Given: preference를 저장하지 않은 Provider가 있다.
+	// Given: a Provider with no saved preference exists.
 	store, cleanup := setupTestStore(t)
 	defer cleanup()
 	providerID, err := store.CreateProvider("metric-pref-empty", `{"auth_method":"oauth_file"}`)
@@ -18,10 +18,10 @@ func TestMetricPreferenceShouldReturnVersionZeroWhenNoRowExists(t *testing.T) {
 		t.Fatalf("CreateProvider() error = %v", err)
 	}
 
-	// When: preference를 조회한다.
+	// When: the preference is fetched.
 	preference, err := store.GetMetricPreference(providerID)
 
-	// Then: version 0과 비어 있는 item 목록을 반환한다.
+	// Then: returns version 0 and an empty item list.
 	if err != nil {
 		t.Fatalf("GetMetricPreference() error = %v", err)
 	}
@@ -34,7 +34,7 @@ func TestMetricPreferenceShouldReturnVersionZeroWhenNoRowExists(t *testing.T) {
 }
 
 func TestMetricPreferenceShouldInsertVersionOneWithoutChangingProviderConfig(t *testing.T) {
-	// Given: 인증 설정이 있는 Provider와 최초 preference 저장 요청이 있다.
+	// Given: a Provider with auth config and an initial preference save request.
 	store, cleanup := setupTestStore(t)
 	defer cleanup()
 	configJSON := `{"auth_method":"oauth_file","cred_source":"keychain"}`
@@ -47,14 +47,14 @@ func TestMetricPreferenceShouldInsertVersionOneWithoutChangingProviderConfig(t *
 		{Metric: "session", Visible: true},
 	}
 
-	// When: expected version 0으로 저장한다.
+	// When: saved with expected version 0.
 	err = store.SaveMetricPreferences([]MetricPreferenceUpdate{{
 		ProviderID:      providerID,
 		ExpectedVersion: 0,
 		Items:           items,
 	}})
 
-	// Then: version 1로 저장되고 providers.config_json은 그대로다.
+	// Then: saved as version 1 and providers.config_json stays unchanged.
 	if err != nil {
 		t.Fatalf("SaveMetricPreferences() error = %v", err)
 	}
@@ -75,7 +75,7 @@ func TestMetricPreferenceShouldInsertVersionOneWithoutChangingProviderConfig(t *
 }
 
 func TestMetricPreferenceShouldIncrementVersionExactlyOnceOnUpdate(t *testing.T) {
-	// Given: version 1 preference가 저장되어 있다.
+	// Given: a version 1 preference is already saved.
 	store, cleanup := setupTestStore(t)
 	defer cleanup()
 	providerID, err := store.CreateProvider("metric-pref-update", `{}`)
@@ -90,14 +90,14 @@ func TestMetricPreferenceShouldIncrementVersionExactlyOnceOnUpdate(t *testing.T)
 	}
 	updatedItems := []domain.MetricPreferenceItem{{Metric: "session", Visible: false}}
 
-	// When: expected version 1로 한 번 갱신한다.
+	// When: updated once with expected version 1.
 	err = store.SaveMetricPreferences([]MetricPreferenceUpdate{{
 		ProviderID:      providerID,
 		ExpectedVersion: 1,
 		Items:           updatedItems,
 	}})
 
-	// Then: item과 version이 각각 요청값과 2로 바뀐다.
+	// Then: item and version change to the request value and 2 respectively.
 	if err != nil {
 		t.Fatalf("SaveMetricPreferences() error = %v", err)
 	}
@@ -111,7 +111,7 @@ func TestMetricPreferenceShouldIncrementVersionExactlyOnceOnUpdate(t *testing.T)
 }
 
 func TestMetricPreferenceShouldRollbackAllProvidersWhenOneVersionConflicts(t *testing.T) {
-	// Given: 두 Provider가 모두 version 1이며 두 번째 갱신만 stale version을 제출한다.
+	// Given: both Providers are at version 1, but only the second update submits a stale version.
 	store, cleanup := setupTestStore(t)
 	defer cleanup()
 	firstID, err := store.CreateProvider("metric-pref-atomic-first", `{}`)
@@ -131,13 +131,13 @@ func TestMetricPreferenceShouldRollbackAllProvidersWhenOneVersionConflicts(t *te
 		t.Fatalf("initial SaveMetricPreferences() error = %v", err)
 	}
 
-	// When: 첫 Provider는 정상 version, 두 번째는 stale version으로 함께 갱신한다.
+	// When: the first Provider updates with a valid version and the second with a stale version, together.
 	err = store.SaveMetricPreferences([]MetricPreferenceUpdate{
 		{ProviderID: firstID, ExpectedVersion: 1, Items: []domain.MetricPreferenceItem{{Metric: "session", Visible: false}}},
 		{ProviderID: secondID, ExpectedVersion: 0, Items: []domain.MetricPreferenceItem{{Metric: "weekly", Visible: false}}},
 	})
 
-	// Then: version conflict가 반환되고 첫 Provider 변경까지 rollback된다.
+	// Then: a version conflict is returned and the first Provider's change is also rolled back.
 	if !errors.Is(err, ErrMetricPreferenceVersionConflict) {
 		t.Fatalf("SaveMetricPreferences() error = %v, want ErrMetricPreferenceVersionConflict", err)
 	}
@@ -158,7 +158,7 @@ func TestMetricPreferenceShouldRollbackAllProvidersWhenOneVersionConflicts(t *te
 }
 
 func TestMetricPreferenceShouldReturnErrorForMalformedJSON(t *testing.T) {
-	// Given: DB에 유효하지 않은 preference JSON 행이 있다.
+	// Given: an invalid preference JSON row exists in the DB.
 	store, cleanup := setupTestStore(t)
 	defer cleanup()
 	providerID, err := store.CreateProvider("metric-pref-malformed", `{}`)
@@ -173,17 +173,17 @@ func TestMetricPreferenceShouldReturnErrorForMalformedJSON(t *testing.T) {
 		t.Fatalf("insert malformed preference error = %v", err)
 	}
 
-	// When: preference를 조회한다.
+	// When: the preference is fetched.
 	_, err = store.GetMetricPreference(providerID)
 
-	// Then: malformed JSON 오류를 숨기지 않는다.
+	// Then: the malformed JSON error is not hidden.
 	if err == nil {
 		t.Fatal("GetMetricPreference() error = nil, want malformed JSON error")
 	}
 }
 
 func TestMetricPreferenceShouldCascadeDeleteWhenProviderIsDeleted(t *testing.T) {
-	// Given: preference가 저장된 Provider가 있다.
+	// Given: a Provider with a saved preference exists.
 	store, cleanup := setupTestStore(t)
 	defer cleanup()
 	providerID, err := store.CreateProvider("metric-pref-cascade", `{}`)
@@ -197,12 +197,12 @@ func TestMetricPreferenceShouldCascadeDeleteWhenProviderIsDeleted(t *testing.T) 
 		t.Fatalf("SaveMetricPreferences() error = %v", err)
 	}
 
-	// When: Provider를 삭제한다.
+	// When: the Provider is deleted.
 	if err := store.DeleteProvider(providerID); err != nil {
 		t.Fatalf("DeleteProvider() error = %v", err)
 	}
 
-	// Then: 연결된 preference 행도 cascade 삭제된다.
+	// Then: the linked preference row is also cascade-deleted.
 	var count int
 	if err := store.db.QueryRow(`
 		SELECT COUNT(*) FROM provider_metric_preferences WHERE provider_id = ?
@@ -215,7 +215,7 @@ func TestMetricPreferenceShouldCascadeDeleteWhenProviderIsDeleted(t *testing.T) 
 }
 
 func TestMetricPreferenceShouldRejectNullUpdatedAt(t *testing.T) {
-	// Given: preference를 연결할 Provider가 있다.
+	// Given: a Provider to link the preference to exists.
 	store, cleanup := setupTestStore(t)
 	defer cleanup()
 	providerID, err := store.CreateProvider("metric-pref-updated-at", `{}`)
@@ -223,20 +223,20 @@ func TestMetricPreferenceShouldRejectNullUpdatedAt(t *testing.T) {
 		t.Fatalf("CreateProvider() error = %v", err)
 	}
 
-	// When: updated_at을 NULL로 지정해 preference 행을 삽입한다.
+	// When: a preference row is inserted with updated_at set to NULL.
 	_, err = store.db.Exec(`
 		INSERT INTO provider_metric_preferences (provider_id, items_json, version, updated_at)
 		VALUES (?, '[]', 1, NULL)
 	`, providerID)
 
-	// Then: schema가 NULL timestamp를 거부한다.
+	// Then: the schema rejects a NULL timestamp.
 	if err == nil {
 		t.Fatal("inserting NULL updated_at error = nil, want NOT NULL constraint error")
 	}
 }
 
 func TestMetricPreferenceShouldAllowExactlyOneConcurrentCASUpdate(t *testing.T) {
-	// Given: version 1 설정과 같은 expected version을 쓰는 두 변경이 있다.
+	// Given: two changes use the same expected version as the version 1 setting.
 	store, cleanup := setupTestStore(t)
 	defer cleanup()
 	providerID, err := store.CreateProvider("metric-pref-concurrent", `{}`)
@@ -258,7 +258,7 @@ func TestMetricPreferenceShouldAllowExactlyOneConcurrentCASUpdate(t *testing.T) 
 	var ready sync.WaitGroup
 	ready.Add(len(candidates))
 
-	// When: 두 goroutine이 같은 version으로 CAS 갱신을 동시에 시작한다.
+	// When: two goroutines start CAS updates with the same version concurrently.
 	for _, items := range candidates {
 		items := items
 		go func() {
@@ -274,7 +274,7 @@ func TestMetricPreferenceShouldAllowExactlyOneConcurrentCASUpdate(t *testing.T) 
 	ready.Wait()
 	close(start)
 
-	// Then: 정확히 하나만 성공하고 최종 설정은 성공 후보 중 하나와 version 2다.
+	// Then: exactly one succeeds and the final setting is one of the successful candidates with version 2.
 	successes := 0
 	conflicts := 0
 	for range candidates {

@@ -30,18 +30,6 @@ func getBucketSizeForCycle(cycleType domain.CycleType, requestedBucket string) s
 	}
 }
 
-// getPrimaryMetric returns the primary metric name for a given cycle type
-func getPrimaryMetric(cycleType domain.CycleType) string {
-	switch cycleType {
-	case domain.CycleTypeRolling5h:
-		return "session"
-	case domain.CycleTypeMonthly:
-		return "premium_interactions"
-	default:
-		return ""
-	}
-}
-
 // aggregateDataByBucket aggregates trend data by bucket size
 func aggregateDataByBucket(data []domain.TrendDataPoint, bucket string) []domain.TrendDataPoint {
 	if len(data) == 0 {
@@ -150,7 +138,7 @@ func (s *Server) handleAPICurrent(w nethttp.ResponseWriter, r *nethttp.Request) 
 			continue
 		}
 
-		primaryMetric := getPrimaryMetric(cycleConfig.CycleType)
+		primaryMetric := cycleConfig.PrimaryMetric
 
 		// Find primary metric snapshot
 		var primarySnapshot *store.UsageSnapshot
@@ -242,7 +230,7 @@ func (s *Server) handleAPICurrent(w nethttp.ResponseWriter, r *nethttp.Request) 
 
 // handleAPITrends returns cycle-aware trend data
 // GET /api/trends?provider_id=&range=&view=&mode=&bucket=
-// provider_id 없으면 모든 활성 provider의 trend 데이터를 range 기준으로 반환
+// If provider_id is omitted, return trend data for all active providers based on range
 func (s *Server) handleAPITrends(w nethttp.ResponseWriter, r *nethttp.Request) {
 	if r.Method != nethttp.MethodGet {
 		nethttp.Error(w, "Method not allowed", nethttp.StatusMethodNotAllowed)
@@ -264,7 +252,7 @@ func (s *Server) handleAPITrends(w nethttp.ResponseWriter, r *nethttp.Request) {
 		bucket = "auto"
 	}
 
-	// provider_id 없으면 모든 활성 provider 반환
+	// If provider_id is omitted, return all active providers
 	if providerID == "" {
 		s.handleAllProvidersTrends(w, r, rangeValue, view, mode, bucket)
 		return
@@ -314,7 +302,7 @@ func (s *Server) handleAPITrends(w nethttp.ResponseWriter, r *nethttp.Request) {
 		endTime = now
 	}
 
-	primaryMetric := getPrimaryMetric(cycleConfig.CycleType)
+	primaryMetric := cycleConfig.PrimaryMetric
 
 	// Get trend data
 	snapshots, err := s.store.GetUsageTrends(p.ID, primaryMetric, startTime, endTime)
@@ -404,7 +392,7 @@ func (s *Server) handleAPIForecast(w nethttp.ResponseWriter, r *nethttp.Request)
 			continue
 		}
 
-		primaryMetric := getPrimaryMetric(cycleConfig.CycleType)
+		primaryMetric := cycleConfig.PrimaryMetric
 
 		// Find primary snapshot
 		var primarySnapshot *store.UsageSnapshot
@@ -637,7 +625,7 @@ func (s *Server) handleAllProvidersTrends(w nethttp.ResponseWriter, r *nethttp.R
 		return
 	}
 
-	// DB의 collected_at이 UTC로 저장되므로 UTC 기준으로 비교
+	// collected_at is stored as UTC in the DB, so compare in UTC
 	now := time.Now().UTC()
 	result := make(map[string]interface{})
 
@@ -649,13 +637,13 @@ func (s *Server) handleAllProvidersTrends(w nethttp.ResponseWriter, r *nethttp.R
 		cycleConfig := domain.GetProviderCycleConfig(p.Name)
 		startTime, endTime := resolveAllProvidersTrendWindow(rangeValue, view, now)
 
-		// 모든 metric 데이터를 한 번에 조회 (metric="" → 전체)
+		// Fetch all metric data at once (metric="" → all)
 		allSnapshots, err := s.store.GetUsageTrends(p.ID, "", startTime, endTime)
 		if err != nil {
 			continue
 		}
 
-		// 최신 snapshot에서 current catalog와 metric별 limit 정보 수집
+		// Collect the current catalog and per-metric limit info from the latest snapshot
 		latestSnapshots, err := s.store.GetLatestUsageByProvider(p.ID)
 		if err != nil {
 			continue
@@ -674,7 +662,7 @@ func (s *Server) handleAllProvidersTrends(w nethttp.ResponseWriter, r *nethttp.R
 		}
 		canonicalItems := domain.ReconcileMetricPreferences(preference.Items, catalog)
 
-		// metric별로 trend 데이터 그룹화
+		// Group trend data by metric
 		metricTrends := make(map[string][]map[string]interface{})
 
 		for _, snap := range allSnapshots {
@@ -685,7 +673,7 @@ func (s *Server) handleAllProvidersTrends(w nethttp.ResponseWriter, r *nethttp.R
 			})
 		}
 
-		// metric별 {trend, limit} 구조로 변환
+		// Convert into a per-metric {trend, limit} structure
 		metricsData := make(map[string]interface{})
 		availableMetrics := make([]string, 0, len(canonicalItems))
 		for _, item := range canonicalItems {
@@ -703,7 +691,7 @@ func (s *Server) handleAllProvidersTrends(w nethttp.ResponseWriter, r *nethttp.R
 			}
 		}
 
-		// 표시 설정의 첫 metric을 range 데이터 유무와 무관하게 기본 선택한다.
+		// Default to the first metric from the display preferences, regardless of whether range data exists.
 		primaryMetric := ""
 		if len(availableMetrics) > 0 {
 			primaryMetric = availableMetrics[0]

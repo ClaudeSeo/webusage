@@ -36,7 +36,7 @@ func NewStore(dbPath string) (*Store, error) {
 
 // configureDB sets up SQLite with optimal settings
 func configureDB(db *sql.DB) error {
-	// SQLite 단일 writer 모델에 맞게 연결 수 제한
+	// Limit connections to match SQLite's single-writer model
 	db.SetMaxOpenConns(1)
 	db.SetMaxIdleConns(1)
 	db.SetConnMaxLifetime(0)

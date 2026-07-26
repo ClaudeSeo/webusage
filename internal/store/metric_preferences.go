@@ -9,24 +9,24 @@ import (
 	"github.com/ClaudeSeo/webusage/internal/domain"
 )
 
-// ErrMetricPreferenceVersionConflict는 저장된 version과 expected version이 다를 때 반환된다.
+// ErrMetricPreferenceVersionConflict is returned when the stored version differs from the expected version.
 var ErrMetricPreferenceVersionConflict = errors.New("metric preference version conflict")
 
-// MetricPreference는 Provider별로 저장된 metric 노출 설정과 version이다.
+// MetricPreference is the per-Provider stored metric display settings and version.
 type MetricPreference struct {
 	ProviderID int64
 	Version    int64
 	Items      []domain.MetricPreferenceItem
 }
 
-// MetricPreferenceUpdate는 CAS 저장에 필요한 Provider별 변경이다.
+// MetricPreferenceUpdate is the per-Provider change needed for a CAS save.
 type MetricPreferenceUpdate struct {
 	ProviderID      int64
 	ExpectedVersion int64
 	Items           []domain.MetricPreferenceItem
 }
 
-// GetMetricPreference는 저장된 설정을 조회하며 행이 없으면 version 0을 반환한다.
+// GetMetricPreference retrieves the stored settings and returns version 0 when no row exists.
 func (s *Store) GetMetricPreference(providerID int64) (*MetricPreference, error) {
 	preference := &MetricPreference{
 		ProviderID: providerID,
@@ -55,7 +55,7 @@ func (s *Store) GetMetricPreference(providerID int64) (*MetricPreference, error)
 	return preference, nil
 }
 
-// SaveMetricPreferences는 모든 Provider 변경을 하나의 CAS transaction으로 저장한다.
+// SaveMetricPreferences saves all Provider changes in a single CAS transaction.
 func (s *Store) SaveMetricPreferences(updates []MetricPreferenceUpdate) error {
 	tx, err := s.db.Begin()
 	if err != nil {

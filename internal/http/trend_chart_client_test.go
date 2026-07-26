@@ -6,14 +6,14 @@ import (
 )
 
 func TestTrendsChartClientShouldReconcileVisibleSelectionWithoutReordering(t *testing.T) {
-	// Given: server가 제공한 visible metric 순서와 기존 client 선택값이 있는 dashboard다.
+	// Given: a dashboard with the visible metric order from the server and existing client selections.
 	server, _ := setupMetricPreferenceTestServer(t)
 	createMetricPreferenceProvider(t, server, "claude", "alpha", "beta")
 
-	// When: dashboard HTML을 조회한다.
+	// When: the dashboard HTML is fetched.
 	body := requestMetricPreferenceDashboard(t, server)
 
-	// Then: visible 선택은 유지하고 stale 선택만 primary로 교정한다.
+	// Then: visible selections are preserved and only stale selections are corrected to the primary.
 	for _, required := range []string{
 		`function reconcileProviderMetricSelections(data)`,
 		`const availableMetrics = Array.isArray(providerObj.available_metrics)`,
@@ -43,14 +43,14 @@ func TestTrendsChartClientShouldReconcileVisibleSelectionWithoutReordering(t *te
 }
 
 func TestDashboardTrendChartShouldRenderStrictFirstEmptyState(t *testing.T) {
-	// Given: strict-first trend 응답을 렌더하는 dashboard다.
+	// Given: a dashboard that renders a strict-first trend response.
 	server, _ := setupMetricPreferenceTestServer(t)
 	createMetricPreferenceProvider(t, server, "claude", "alpha", "beta")
 
-	// When: dashboard HTML을 조회한다.
+	// When: the dashboard HTML is fetched.
 	body := requestMetricPreferenceDashboard(t, server)
 
-	// Then: 선택 metric의 빈 trend는 다른 metric fallback 없이 명시적인 빈 상태로 렌더한다.
+	// Then: an empty trend for the selected metric renders as an explicit empty state without falling back to another metric.
 	for _, required := range []string{
 		`function showTrendChartEmptyState(message, hint = '')`,
 		`function ensureTrendChartCanvas()`,
@@ -72,5 +72,29 @@ func TestDashboardTrendChartShouldRenderStrictFirstEmptyState(t *testing.T) {
 	chartIndex := strings.Index(renderSource, "new Chart(")
 	if emptyIndex < 0 || chartIndex < 0 || emptyIndex > chartIndex {
 		t.Fatal("empty trend must be handled before creating a chart")
+	}
+}
+
+func TestDashboardTrendChartShouldNormalizeLimitedMetricsToPercent(t *testing.T) {
+	// Given: providers can expose selected metrics with different numeric limits.
+	server, _ := setupMetricPreferenceTestServer(t)
+	createMetricPreferenceProvider(t, server, "kirocli", "credits")
+
+	// When: the dashboard HTML is fetched.
+	body := requestMetricPreferenceDashboard(t, server)
+
+	// Then: limited trend values use a shared percentage scale before cumulative or delta rendering.
+	for _, required := range []string{
+		`function normalizeSelectedTrend(data, providerName)`,
+		`const limit = getSelectedLimit(data, providerName);`,
+		`value: (point.value / limit) * 100`,
+		`const points = normalizeSelectedTrend(data, providerName);`,
+		`normalizedToPercent: selectedLimit > 0`,
+		`limitValue = 100;`,
+		`warningValue = 80;`,
+	} {
+		if !strings.Contains(body, required) {
+			t.Fatalf("dashboard missing limited-metric normalization contract %q", required)
+		}
 	}
 }

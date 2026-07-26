@@ -6,13 +6,13 @@ import (
 )
 
 func TestMetricPreferenceShouldShowSortedCatalogWhenNoPreferencesAreSaved(t *testing.T) {
-	// Given: 저장 설정 없이 순서가 섞인 최신 catalog가 있다.
+	// Given: a latest catalog with shuffled order and no saved preferences.
 	catalog := []string{"weekly", "session", "extra_credits"}
 
-	// When: 노출 설정을 계산한다.
+	// When: compute the display preferences.
 	got := ReconcileMetricPreferences(nil, catalog)
 
-	// Then: 모든 metric이 key 오름차순으로 노출된다.
+	// Then: every metric is shown in ascending key order.
 	want := []ReconciledMetricPreferenceItem{
 		{Metric: "extra_credits", Label: "Extra 크레딧", Visible: true, Available: true},
 		{Metric: "session", Label: "세션 (5h)", Visible: true, Available: true},
@@ -24,17 +24,17 @@ func TestMetricPreferenceShouldShowSortedCatalogWhenNoPreferencesAreSaved(t *tes
 }
 
 func TestMetricPreferenceShouldRestoreSavedOrderAndVisibility(t *testing.T) {
-	// Given: catalog와 다른 순서 및 hidden 상태가 저장되어 있다.
+	// Given: a saved order and hidden state different from the catalog.
 	saved := []MetricPreferenceItem{
 		{Metric: "weekly", Visible: false},
 		{Metric: "session", Visible: true},
 	}
 	catalog := []string{"session", "weekly"}
 
-	// When: 노출 설정을 계산한다.
+	// When: compute the display preferences.
 	got := ReconcileMetricPreferences(saved, catalog)
 
-	// Then: 저장 순서와 visibility가 복원되고 label은 domain에서 계산된다.
+	// Then: saved order and visibility are restored, and the label is computed by the domain.
 	want := []ReconciledMetricPreferenceItem{
 		{Metric: "weekly", Label: "주간 (7d)", Visible: false, Available: true},
 		{Metric: "session", Label: "세션 (5h)", Visible: true, Available: true},
@@ -45,14 +45,14 @@ func TestMetricPreferenceShouldRestoreSavedOrderAndVisibility(t *testing.T) {
 }
 
 func TestMetricPreferenceShouldAppendNewMetricsSortedAndVisible(t *testing.T) {
-	// Given: 저장 이후 두 metric이 catalog에 추가되었다.
+	// Given: two metrics were added to the catalog after saving.
 	saved := []MetricPreferenceItem{{Metric: "weekly", Visible: false}}
 	catalog := []string{"session", "weekly", "extra_credits"}
 
-	// When: 노출 설정을 계산한다.
+	// When: compute the display preferences.
 	got := ReconcileMetricPreferences(saved, catalog)
 
-	// Then: 새 metric은 정렬된 상태로 저장 순서 뒤에 visible로 추가된다.
+	// Then: new metrics are appended after the saved order, sorted and visible.
 	want := []ReconciledMetricPreferenceItem{
 		{Metric: "weekly", Label: "주간 (7d)", Visible: false, Available: true},
 		{Metric: "extra_credits", Label: "Extra 크레딧", Visible: true, Available: true},
@@ -64,17 +64,17 @@ func TestMetricPreferenceShouldAppendNewMetricsSortedAndVisible(t *testing.T) {
 }
 
 func TestMetricPreferenceShouldPreserveUnavailableMetricAndRestoreItsPosition(t *testing.T) {
-	// Given: 저장된 metric 하나가 현재 catalog에서 사라졌다.
+	// Given: one saved metric is missing from the current catalog.
 	saved := []MetricPreferenceItem{
 		{Metric: "weekly", Visible: false},
 		{Metric: "session", Visible: true},
 	}
 
-	// When: metric이 사라진 catalog와 재등장한 catalog를 각각 계산한다.
+	// When: compute against a catalog where the metric is missing, and one where it reappears.
 	missing := ReconcileMetricPreferences(saved, []string{"session"})
 	reappeared := ReconcileMetricPreferences(saved, []string{"session", "weekly"})
 
-	// Then: unavailable 항목은 원래 위치와 visibility를 보존하고 재등장 시 같은 위치로 복귀한다.
+	// Then: unavailable items preserve their original position and visibility, and return to the same position when they reappear.
 	wantMissing := []ReconciledMetricPreferenceItem{
 		{Metric: "weekly", Label: "주간 (7d)", Visible: false, Available: false},
 		{Metric: "session", Label: "세션 (5h)", Visible: true, Available: true},
@@ -92,7 +92,7 @@ func TestMetricPreferenceShouldPreserveUnavailableMetricAndRestoreItsPosition(t 
 }
 
 func TestMetricPreferenceShouldNotMutateInputs(t *testing.T) {
-	// Given: 저장 설정과 catalog의 원본 복사본이 있다.
+	// Given: original copies of saved preferences and the catalog.
 	saved := []MetricPreferenceItem{
 		{Metric: "weekly", Visible: false},
 		{Metric: "session", Visible: true},
@@ -101,10 +101,10 @@ func TestMetricPreferenceShouldNotMutateInputs(t *testing.T) {
 	wantSaved := append([]MetricPreferenceItem(nil), saved...)
 	wantCatalog := append([]string(nil), catalog...)
 
-	// When: 노출 설정을 계산한다.
+	// When: compute the display preferences.
 	_ = ReconcileMetricPreferences(saved, catalog)
 
-	// Then: 호출자가 소유한 두 입력 slice는 변경되지 않는다.
+	// Then: both caller-owned input slices remain unchanged.
 	if !reflect.DeepEqual(saved, wantSaved) {
 		t.Fatalf("saved input mutated: got %#v, want %#v", saved, wantSaved)
 	}

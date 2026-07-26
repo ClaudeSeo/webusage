@@ -24,6 +24,7 @@ coverage.html
 
 # OS
 .DS_Store
+.workflow-docs
 
 # Security
 security-findings-owasp.json

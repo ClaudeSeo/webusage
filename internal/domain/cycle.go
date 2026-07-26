@@ -23,31 +23,32 @@ const (
 
 // ProviderCycleConfig holds cycle-aware configuration for each provider
 type ProviderCycleConfig struct {
-	CycleType  CycleType `json:"cycle_type"`
-	LimitType  LimitType `json:"limit_type"`
-	LimitValue *float64  `json:"limit_value,omitempty"`
+	CycleType     CycleType `json:"cycle_type"`
+	LimitType     LimitType `json:"limit_type"`
+	LimitValue    *float64  `json:"limit_value,omitempty"`
+	PrimaryMetric string    `json:"primary_metric,omitempty"`
 }
 
 // CurrentCycleInfo represents current cycle state for a provider
 type CurrentCycleInfo struct {
-	ProviderID           string     `json:"provider_id"`
-	DisplayName          string     `json:"display_name"`
-	Enabled              bool       `json:"enabled"`
-	CycleType            string     `json:"cycle_type"`
-	LimitType            string     `json:"limit_type"`
-	LimitValue           *float64   `json:"limit_value,omitempty"`
-	CurrentUsage         float64    `json:"current_usage"`
-	UsagePercent         float64    `json:"usage_percent"`
-	CycleStart           *time.Time `json:"cycle_start,omitempty"`
-	CycleEnd             *time.Time `json:"cycle_end,omitempty"`
-	TimeRemaining        string     `json:"time_remaining,omitempty"`
-	ForecastLimitAt      *time.Time `json:"forecast_limit_at,omitempty"`
+	ProviderID            string     `json:"provider_id"`
+	DisplayName           string     `json:"display_name"`
+	Enabled               bool       `json:"enabled"`
+	CycleType             string     `json:"cycle_type"`
+	LimitType             string     `json:"limit_type"`
+	LimitValue            *float64   `json:"limit_value,omitempty"`
+	CurrentUsage          float64    `json:"current_usage"`
+	UsagePercent          float64    `json:"usage_percent"`
+	CycleStart            *time.Time `json:"cycle_start,omitempty"`
+	CycleEnd              *time.Time `json:"cycle_end,omitempty"`
+	TimeRemaining         string     `json:"time_remaining,omitempty"`
+	ForecastLimitAt       *time.Time `json:"forecast_limit_at,omitempty"`
 	WillExceedBeforeReset bool       `json:"will_exceed_before_reset"`
-	CurrentPace          float64    `json:"current_pace"`
-	BaselinePace        float64    `json:"baseline_pace"`
-	PaceVsBaselineRatio float64    `json:"pace_vs_baseline_ratio"`
-	LastUpdated          *time.Time `json:"last_updated,omitempty"`
-	Error                *string    `json:"error,omitempty"`
+	CurrentPace           float64    `json:"current_pace"`
+	BaselinePace          float64    `json:"baseline_pace"`
+	PaceVsBaselineRatio   float64    `json:"pace_vs_baseline_ratio"`
+	LastUpdated           *time.Time `json:"last_updated,omitempty"`
+	Error                 *string    `json:"error,omitempty"`
 }
 
 // TrendDataPoint represents a single data point in trend series
@@ -61,9 +62,9 @@ type TrendDataPoint struct {
 type ProviderTrends struct {
 	ProviderID string           `json:"provider_id"`
 	CycleType  string           `json:"cycle_type"`
-	View       string           `json:"view"`        // current, previous, both
-	Mode       string           `json:"mode"`        // absolute, relative, rate
-	Bucket     string           `json:"bucket"`      // auto, hour, day, cycle
+	View       string           `json:"view"`   // current, previous, both
+	Mode       string           `json:"mode"`   // absolute, relative, rate
+	Bucket     string           `json:"bucket"` // auto, hour, day, cycle
 	Data       []TrendDataPoint `json:"data"`
 	CycleStart *time.Time       `json:"cycle_start,omitempty"`
 	CycleEnd   *time.Time       `json:"cycle_end,omitempty"`
@@ -87,17 +88,17 @@ type ForecastInfo struct {
 
 // ProviderMetadata represents provider metadata
 type ProviderMetadata struct {
-	ProviderID       string    `json:"provider_id"`
-	DisplayName      string    `json:"display_name"`
-	AuthMethod       string    `json:"auth_method"`
-	Enabled          bool      `json:"enabled"`
-	CycleType        string    `json:"cycle_type"`
-	LimitType        string    `json:"limit_type"`
-	LimitValue       *float64  `json:"limit_value,omitempty"`
-	Metrics          []string  `json:"metrics"`
-	SupportedViews   []string  `json:"supported_views"`
-	SupportedModes   []string  `json:"supported_modes"`
-	SupportedBuckets []string  `json:"supported_buckets"`
+	ProviderID       string   `json:"provider_id"`
+	DisplayName      string   `json:"display_name"`
+	AuthMethod       string   `json:"auth_method"`
+	Enabled          bool     `json:"enabled"`
+	CycleType        string   `json:"cycle_type"`
+	LimitType        string   `json:"limit_type"`
+	LimitValue       *float64 `json:"limit_value,omitempty"`
+	Metrics          []string `json:"metrics"`
+	SupportedViews   []string `json:"supported_views"`
+	SupportedModes   []string `json:"supported_modes"`
+	SupportedBuckets []string `json:"supported_buckets"`
 }
 
 // MetricView represents a single metric for display
@@ -127,5 +128,5 @@ type ProviderView struct {
 	WillExceedBeforeReset bool
 	CurrentPace           float64
 	BaselinePace          float64
-	PaceRatio            float64
+	PaceRatio             float64
 }

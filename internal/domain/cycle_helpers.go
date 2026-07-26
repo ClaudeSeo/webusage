@@ -10,16 +10,25 @@ import (
 // This can be moved to configuration file in the future
 var ProviderCycleConfigs = map[string]ProviderCycleConfig{
 	"claude": {
-		CycleType: CycleTypeRolling5h,
-		LimitType: LimitTypeLimited,
+		CycleType:     CycleTypeRolling5h,
+		LimitType:     LimitTypeLimited,
+		PrimaryMetric: "session",
 	},
 	"codex": {
-		CycleType: CycleTypeRolling5h,
-		LimitType: LimitTypeLimited,
+		CycleType:     CycleTypeRolling5h,
+		LimitType:     LimitTypeLimited,
+		PrimaryMetric: "session",
 	},
 	"copilot": {
-		CycleType: CycleTypeMonthly,
-		LimitType: LimitTypeLimited,
+		CycleType:     CycleTypeMonthly,
+		LimitType:     LimitTypeLimited,
+		PrimaryMetric: "premium_interactions",
+	},
+	// kirocli credits follows nextDateReset of Get-Usage-Limits (based on monthly billing).
+	"kirocli": {
+		CycleType:     CycleTypeMonthly,
+		LimitType:     LimitTypeLimited,
+		PrimaryMetric: "credits",
 	},
 }
 
@@ -167,6 +176,7 @@ var MetricLabels = map[string]string{
 	"weekly_sonnet":        "주간 Sonnet",
 	"extra_credits":        "Extra 크레딧",
 	"credits":              "크레딧",
+	"bonus_credits":        "보너스 크레딧",
 	"premium_interactions": "프리미엄 사용량",
 	"chat":                 "채팅",
 }

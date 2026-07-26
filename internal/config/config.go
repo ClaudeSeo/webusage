@@ -3,37 +3,42 @@ package config
 import (
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/joho/godotenv"
 )
 
-// Config는 애플리케이션 전체 설정
+// Config is the application-wide configuration
 type Config struct {
-	// DBPath는 SQLite 데이터베이스 파일 경로
+	// DBPath is the SQLite database file path
 	DBPath string
-	// ServerHost는 HTTP 서버 바인딩 주소 (default: 127.0.0.1)
+	// ServerHost is the HTTP server bind address (default: 127.0.0.1)
 	ServerHost string
-	// ServerPort는 HTTP 서버 포트
+	// ServerPort is the HTTP server port
 	ServerPort int
-	// CollectionInterval은 usage 데이터 수집 주기
+	// CollectionInterval is the usage data collection interval
 	CollectionInterval time.Duration
 
-	// OpenUsageURL은 OpenUsage API endpoint
+	// OpenUsageURL is the OpenUsage API endpoint
 	OpenUsageURL string
 
-	// Title은 사이트 제목 접미사. 비어있지 않으면 "WebUsage - <Title>" 표시
+	// OpenUsageEnabled disables the OpenUsage HTTP collection path when false.
+	// Set to false when using only native providers (without the OpenUsage app).
+	OpenUsageEnabled bool
+
+	// Title is the site title suffix. When non-empty, "WebUsage - <Title>" is displayed
 	Title string
 }
 
-// LoadConfig는 .env 파일과 환경변수에서 설정을 로드합니다
+// LoadConfig loads configuration from the .env file and environment variables
 func LoadConfig() (*Config, error) {
-	// .env 파일이 없어도 계속 진행
+	// Continue even if the .env file is missing
 	if err := godotenv.Load(); err != nil {
 		fmt.Println("No .env file found, using environment variables")
 	}
 
-	interval := getIntEnv("COLLECTION_INTERVAL", 900) // 15분 기본값
+	interval := getIntEnv("COLLECTION_INTERVAL", 900) // 15-minute default
 
 	return &Config{
 		DBPath:             getEnv("DB_PATH", "./data/usage.db"),
@@ -41,11 +46,12 @@ func LoadConfig() (*Config, error) {
 		ServerPort:         getIntEnv("SERVER_PORT", 8080),
 		CollectionInterval: time.Duration(interval) * time.Second,
 		OpenUsageURL:       getEnv("OPENUSAGE_URL", "http://127.0.0.1:6736"),
-		Title:             getEnv("TITLE", ""),
+		OpenUsageEnabled:   getBoolEnv("OPENUSAGE_ENABLED", true),
+		Title:              getEnv("TITLE", ""),
 	}, nil
 }
 
-// getEnv는 환경변수를 읽고 없으면 기본값을 반환합니다
+// getEnv reads an environment variable, returning the default value if unset
 func getEnv(key, defaultValue string) string {
 	if value := os.Getenv(key); value != "" {
 		return value
@@ -53,7 +59,7 @@ func getEnv(key, defaultValue string) string {
 	return defaultValue
 }
 
-// getIntEnv는 환경변수를 정수로 읽고 없거나 파싱 실패 시 기본값을 반환합니다
+// getIntEnv reads an environment variable as an integer, returning the default on absence or parse failure
 func getIntEnv(key string, defaultValue int) int {
 	value := os.Getenv(key)
 	if value == "" {
@@ -65,4 +71,21 @@ func getIntEnv(key string, defaultValue int) int {
 		return defaultValue
 	}
 	return result
+}
+
+// getBoolEnv reads an environment variable as a boolean. "1", "true", "yes" (case-insensitive) are
+// true, other non-empty values are false, and an empty value returns defaultValue.
+func getBoolEnv(key string, defaultValue bool) bool {
+	value := os.Getenv(key)
+	if value == "" {
+		return defaultValue
+	}
+	switch strings.ToLower(value) {
+	case "1", "true", "yes", "on":
+		return true
+	case "0", "false", "no", "off":
+		return false
+	default:
+		return defaultValue
+	}
 }

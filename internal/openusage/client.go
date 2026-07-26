@@ -44,7 +44,7 @@ type UsageSnapshot struct {
 // Line represents a single metric line in the usage snapshot
 type Line struct {
 	Type             string  `json:"type"`             // "progress" or "text"
-	Label            string  `json:"label"`            // "Session", "Weekly", "Today" 등
+	Label            string  `json:"label"`            // "Session", "Weekly", "Today", etc.
 	Used             float64 `json:"used,omitempty"`   // progress type only
 	Limit            float64 `json:"limit,omitempty"`  // progress type only
 	Format           *Format `json:"format,omitempty"` // progress type only

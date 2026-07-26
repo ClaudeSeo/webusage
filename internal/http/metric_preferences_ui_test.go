@@ -19,13 +19,13 @@ func metricPreferenceFunctionSource(t *testing.T, body, name, nextName string) s
 }
 
 func TestDashboardMetricPreferenceEditorShouldRenderAccessibleAvailableOnlyControls(t *testing.T) {
-	// Given: metric preference editor를 포함하는 dashboard가 있다.
+	// Given: a dashboard that includes the metric preference editor.
 	server, _ := setupMetricPreferenceTestServer(t)
 
-	// When: dashboard HTML을 조회한다.
+	// When: fetching the dashboard HTML.
 	body := requestMetricPreferenceDashboard(t, server)
 
-	// Then: editor의 접근성 markup과 available-only 조작 계약이 포함된다.
+	// Then: the editor's accessibility markup and available-only interaction contract are included.
 	for _, required := range []string{
 		`id="metricPreferenceEditor"`,
 		`id="metricPreferenceProviders"`,
@@ -55,13 +55,13 @@ func TestDashboardMetricPreferenceEditorShouldRenderAccessibleAvailableOnlyContr
 }
 
 func TestDashboardMetricPreferenceEditorShouldPreserveDraftAndHandleSaveFailures(t *testing.T) {
-	// Given: metric preference editor를 포함하는 dashboard가 있다.
+	// Given: a dashboard that includes the metric preference editor.
 	server, _ := setupMetricPreferenceTestServer(t)
 
-	// When: dashboard HTML을 조회한다.
+	// When: fetching the dashboard HTML.
 	body := requestMetricPreferenceDashboard(t, server)
 
-	// Then: draft-only 편집, unavailable slot, 저장·취소·실패 처리 계약이 포함된다.
+	// Then: draft-only editing, unavailable slot, and save/cancel/failure handling contracts are included.
 	for _, required := range []string{
 		`fetch('/api/metric-preferences')`,
 		`metricPreferenceSource`,

@@ -36,8 +36,8 @@ func (s *Store) CreateProvider(name, configJSON string) (int64, error) {
 	return id, nil
 }
 
-// CreateProviderDisabled는 provider를 비활성화 상태로 등록합니다 (INSERT OR IGNORE)
-// 이미 존재하는 provider는 무시합니다
+// CreateProviderDisabled registers a provider in disabled state (INSERT OR IGNORE)
+// Existing providers are ignored
 func (s *Store) CreateProviderDisabled(name, displayName, configJSON string) (int64, error) {
 	result, err := s.db.Exec(`
 		INSERT OR IGNORE INTO providers (name, enabled, config_json)
@@ -52,7 +52,7 @@ func (s *Store) CreateProviderDisabled(name, displayName, configJSON string) (in
 		return 0, err
 	}
 
-	// INSERT OR IGNORE가 무시된 경우 기존 ID를 반환
+	// Return the existing ID when INSERT OR IGNORE was a no-op
 	if id == 0 {
 		existing, err := s.GetProviderByName(name)
 		if err != nil {
@@ -219,11 +219,11 @@ func (s *Store) DeleteProviderByName(name string) error {
 
 // ProviderConfig helpers
 
-// ProviderConfigDB는 provider 인증 방식과 자격증명 출처를 저장합니다.
-// API key는 저장하지 않으며 OAuth credential 경로와 방식만 기록합니다.
+// ProviderConfigDB stores the provider auth method and credential source.
+// It does not store the API key; only the OAuth credential path and method are recorded.
 type ProviderConfigDB struct {
 	AuthMethod string `json:"auth_method"`
-	CredSource string `json:"cred_source,omitempty"` // 자격증명 발견 경로 (파일경로, keychain 등)
+	CredSource string `json:"cred_source,omitempty"` // Credential discovery path (file path, keychain, etc.)
 	BaseURL    string `json:"base_url,omitempty"`
 }
 

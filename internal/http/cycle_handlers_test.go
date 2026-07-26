@@ -181,6 +181,53 @@ func TestCycleAware_Trends(t *testing.T) {
 	}
 }
 
+func TestCycleAwareTrendsShouldUseCreditsForKirocliMonthlyUsage(t *testing.T) {
+	// Given: Kiro CLI has monthly credit snapshots in the current cycle.
+	server, cleanup := setupTestServerForCycle(t)
+	defer cleanup()
+
+	kiroID := mustCreateHTTPTestProvider(t, server, "kirocli", `{}`)
+	now := time.Now().UTC()
+	mustCreateHTTPTestSnapshots(t, server, []*store.UsageSnapshot{
+		{
+			ProviderID:  kiroID,
+			Metric:      "credits",
+			Used:        5000,
+			Limit:       floatPtr(10000),
+			CollectedAt: now.Add(-time.Hour),
+		},
+		{
+			ProviderID:  kiroID,
+			Metric:      "credits",
+			Used:        5500,
+			Limit:       floatPtr(10000),
+			CollectedAt: now,
+		},
+	})
+
+	// When: the provider-specific monthly trend is requested.
+	req := httptest.NewRequest(http.MethodGet, "/api/trends?provider_id=kirocli&view=current&mode=absolute&bucket=hour", nil)
+	w := httptest.NewRecorder()
+	server.mux.ServeHTTP(w, req)
+
+	// Then: the credits metric is returned instead of Copilot's monthly metric.
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
+	}
+	var response domain.ProviderTrends
+	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(response.Data) != 2 {
+		t.Fatalf("trend points = %d, want 2; response=%s", len(response.Data), w.Body.String())
+	}
+	for _, point := range response.Data {
+		if point.Metric != "credits" {
+			t.Errorf("metric = %q, want credits", point.Metric)
+		}
+	}
+}
+
 // TestCycleAware_Trends_MissingProvider tests error handling for missing provider
 func TestCycleAware_Trends_MissingProvider(t *testing.T) {
 	server, cleanup := setupTestServerForCycle(t)

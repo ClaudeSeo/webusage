@@ -13,13 +13,13 @@ _die()  { printf '\033[31mERROR: %s\033[0m\n' "$*" >&2; exit 1; }
 
 _log "webusage installer"
 
-# 사전 요구사항 확인
+# Check prerequisites
 command -v git  >/dev/null 2>&1 || _die "git 이 설치되어 있지 않습니다"
 command -v go   >/dev/null 2>&1 || \
   command -v mise >/dev/null 2>&1 || \
   _die "Go 또는 mise 가 필요합니다. https://mise.jdx.dev 또는 https://go.dev/dl"
 
-# Go 빌드 래퍼: mise 우선, 없으면 system go 사용
+# Go build wrapper: prefer mise, fall back to system go
 _go_build() {
   if command -v mise >/dev/null 2>&1; then
     mise exec -- go build "$@"
@@ -28,7 +28,7 @@ _go_build() {
   fi
 }
 
-# 저장소 클론 또는 업데이트
+# Clone or update repository
 if [[ -d "$INSTALL_DIR/.git" ]]; then
   _log "기존 설치 업데이트 중: $INSTALL_DIR"
   git -C "$INSTALL_DIR" pull --ff-only
@@ -37,21 +37,21 @@ else
   git clone "$REPO_URL" "$INSTALL_DIR"
 fi
 
-# 빌드
+# Build
 _log "빌드 중..."
 (cd "$INSTALL_DIR" && _go_build -o webusage ./cmd/server)
 _ok "빌드 완료: $INSTALL_DIR/webusage"
 
-# 데이터 디렉터리 준비
+# Prepare data directory
 mkdir -p -m 0700 "$DATA_DIR"
 _ok "데이터 디렉터리: $DATA_DIR"
 
-# webusage-manage 심링크 생성
+# Create webusage-manage symlink
 mkdir -p "$(dirname "$BIN_LINK")"
 ln -sf "$INSTALL_DIR/scripts/manage.sh" "$BIN_LINK"
 _ok "명령어 등록: $BIN_LINK"
 
-# PATH 안내
+# PATH guidance
 if ! echo "$PATH" | grep -q "$(dirname "$BIN_LINK")"; then
   _warn "$(dirname "$BIN_LINK") 이 PATH 에 없습니다. 아래를 ~/.zshrc 또는 ~/.bashrc 에 추가하세요:"
   printf '    export PATH="%s:$PATH"\n' "$(dirname "$BIN_LINK")"
@@ -69,7 +69,7 @@ printf '  설치 경로:  %s\n' "$INSTALL_DIR"
 printf '  데이터 경로: %s\n' "$DATA_DIR"
 printf '\n'
 
-# stdin 이 TTY 일 때만 프롬프트 표시 (curl|bash 파이프 모드에서는 -t 0 이 false)
+# Prompt only when stdin is a TTY (curl|bash pipe mode makes -t 0 false)
 if [[ -t 0 ]]; then
   read -r -p "지금 바로 시작할까요? [y/N] " answer || answer="n"
   if [[ "$answer" == [yY] ]]; then

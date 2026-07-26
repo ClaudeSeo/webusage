@@ -306,7 +306,7 @@ type HeatmapResponse struct {
 }
 
 // GetHeatmapData retrieves heatmap data aggregated by date (GitHub contribution graph style)
-// providerID가 0이면 전체 provider 집계
+// Aggregates across all providers when providerID is 0
 func (s *Store) GetHeatmapData(providerID int64, startTime, endTime time.Time) (*HeatmapResponse, error) {
 	// Query daily aggregates
 	var query string

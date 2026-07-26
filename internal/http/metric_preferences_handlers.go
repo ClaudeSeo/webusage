@@ -240,7 +240,7 @@ func mergeMetricPreferenceItems(
 	replacementIndex := 0
 	for _, item := range stored {
 		if _, exists := available[item.Metric]; !exists {
-			// unavailable 항목은 client payload와 무관하게 내부 slot과 visibility를 보존한다.
+			// Unavailable items preserve their internal slot and visibility regardless of the client payload.
 			merged = append(merged, item)
 			continue
 		}

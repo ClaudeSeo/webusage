@@ -72,7 +72,7 @@
 {{end}}
 
 <script>
-// Provider 관리 UI
+// Provider management UI
 async function loadProviderManagement() {
     try {
         const resp = await fetch('/api/providers');
@@ -127,7 +127,7 @@ async function toggleProvider(name, action) {
             alert(`${action === 'enable' ? '활성화' : '비활성화'} 실패: ${data.error}`);
             return;
         }
-        // 카드 상태 즉시 갱신
+        // Refresh card state immediately
         await loadProviderManagement();
     } catch (e) {
         alert('요청 실패: ' + e.message);
@@ -142,7 +142,7 @@ function calculateRiskSummary(providers) {
     let okCount = 0;
 
     providers.forEach(provider => {
-        // multi-metric: 가장 높은 사용률 기준으로 판단
+        // multi-metric: judge by the highest utilization
         const maxPercent = (provider.metrics || []).reduce((max, m) => {
             const pct = m.limit > 0 ? (m.used / m.limit) * 100 : 0;
             return Math.max(max, pct);
@@ -193,7 +193,7 @@ function updateRiskBanner(risk) {
     assessmentEl.textContent = assessment;
 }
 
-// Provider 관리 UI 초기 로드
+// Initial load of Provider management UI
 document.addEventListener('DOMContentLoaded', function() {
     loadProviderManagement();
 });

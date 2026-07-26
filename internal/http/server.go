@@ -32,7 +32,7 @@ type Server struct {
 	title       string
 }
 
-// NewServer creates a new HTTP server. templateDir은 옵션 — 빈 문자열이면 "templates" 기본값 사용
+// NewServer creates a new HTTP server. templateDir is optional — defaults to "templates" when empty
 func NewServer(s *store.Store, host string, port int, logger *slog.Logger, templateDir ...string) (*Server, error) {
 	tdir := "templates"
 	if len(templateDir) > 0 && templateDir[0] != "" {
@@ -120,7 +120,7 @@ func (s *Server) loadTemplates() error {
 			if t.IsZero() {
 				return "-"
 			}
-			// KST(Asia/Seoul)로 변환하여 표시
+			// Convert to KST (Asia/Seoul) for display
 			kst, err := time.LoadLocation("Asia/Seoul")
 			if err != nil {
 				return t.Format("1/2 15:04")

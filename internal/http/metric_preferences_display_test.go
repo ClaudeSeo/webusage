@@ -67,7 +67,7 @@ func assertDashboardMetricOrder(t *testing.T, body string, expected []string) {
 }
 
 func TestDashboardAndTrendsMetricPreferenceShouldDefaultToAlphabeticalVisibleCatalog(t *testing.T) {
-	// Given: preference 행 없이 이름 순서가 섞인 최신 metric catalog가 있다.
+	// Given: latest metric catalog with mixed name order and no preference rows.
 	server, _ := setupMetricPreferenceTestServer(t)
 	providerID, err := server.store.CreateProvider("claude", `{}`)
 	if err != nil {
@@ -82,11 +82,11 @@ func TestDashboardAndTrendsMetricPreferenceShouldDefaultToAlphabeticalVisibleCat
 		}
 	}
 
-	// When: dashboard와 all-provider trends를 조회한다.
+	// When: query the dashboard and all-provider trends.
 	dashboard := requestMetricPreferenceDashboard(t, server)
 	trends := requestMetricPreferenceTrends(t, server, "/api/trends?range=5h")
 
-	// Then: 양쪽 모두 catalog 이름 오름차순 전체 visible이며 첫 key가 primary다.
+	// Then: both expose the full visible set in ascending catalog name order, with the first key as primary.
 	assertDashboardMetricOrder(t, dashboard, []string{"alpha", "zeta"})
 	if !reflect.DeepEqual(trends.AvailableMetrics, []string{"alpha", "zeta"}) {
 		t.Fatalf("available_metrics = %#v, want [alpha zeta]", trends.AvailableMetrics)
@@ -97,7 +97,7 @@ func TestDashboardAndTrendsMetricPreferenceShouldDefaultToAlphabeticalVisibleCat
 }
 
 func TestDashboardAndTrendsMetricPreferenceShouldShareVisibleOrderAndKeepStrictFirstEmpty(t *testing.T) {
-	// Given: 첫 visible metric은 선택 range 밖에 있고 hidden/unavailable 항목이 저장되어 있다.
+	// Given: the first visible metric is outside the selected range, and hidden/unavailable items are stored.
 	server, _ := setupMetricPreferenceTestServer(t)
 	providerID, err := server.store.CreateProvider("claude", `{}`)
 	if err != nil {
@@ -124,11 +124,11 @@ func TestDashboardAndTrendsMetricPreferenceShouldShareVisibleOrderAndKeepStrictF
 		t.Fatalf("SaveMetricPreferences() error = %v", err)
 	}
 
-	// When: dashboard와 최근 5시간 all-provider trends를 조회한다.
+	// When: query the dashboard and recent 5-hour all-provider trends.
 	dashboard := requestMetricPreferenceDashboard(t, server)
 	trends := requestMetricPreferenceTrends(t, server, "/api/trends?range=5h")
 
-	// Then: 동일한 visible 순서만 노출되고 첫 metric은 빈 trend여도 primary로 유지된다.
+	// Then: only the same visible order is exposed, and the first metric stays primary even with an empty trend.
 	assertDashboardMetricOrder(t, dashboard, []string{"beta", "gamma"})
 	for _, hidden := range []string{"alpha", "stale"} {
 		if strings.Contains(dashboard, `data-label="`+hidden+`"`) {
@@ -153,7 +153,7 @@ func TestDashboardAndTrendsMetricPreferenceShouldShareVisibleOrderAndKeepStrictF
 		}
 	}
 
-	// Then: display preference 조회는 snapshot과 Provider 활성 상태를 변경하지 않는다.
+	// Then: display preference queries do not mutate snapshots or Provider enabled state.
 	var snapshotCount int
 	if err := server.store.DB().QueryRow(`SELECT COUNT(*) FROM usage_snapshots WHERE provider_id = ?`, providerID).Scan(&snapshotCount); err != nil {
 		t.Fatalf("count snapshots error = %v", err)

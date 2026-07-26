@@ -11,6 +11,8 @@ import (
 	"github.com/ClaudeSeo/webusage/internal/collector"
 	"github.com/ClaudeSeo/webusage/internal/config"
 	internalhttp "github.com/ClaudeSeo/webusage/internal/http"
+	"github.com/ClaudeSeo/webusage/internal/native"
+	"github.com/ClaudeSeo/webusage/internal/native/kirocli"
 	"github.com/ClaudeSeo/webusage/internal/openusage"
 	"github.com/ClaudeSeo/webusage/internal/store"
 )
@@ -49,15 +51,27 @@ func main() {
 
 	logger.Info("Database initialized with WAL mode")
 
-	// Create OpenUsage client
-	client := openusage.NewClient(cfg.OpenUsageURL)
+	// Create OpenUsage client (optional). When disabled, webusage collects only
+	// from native providers and never contacts the OpenUsage HTTP API.
+	var client *openusage.Client
+	if cfg.OpenUsageEnabled {
+		client = openusage.NewClient(cfg.OpenUsageURL)
 
-	// Check OpenUsage availability
-	if !client.IsHealthy() {
-		logger.Warn("OpenUsage API not available at startup",
-			"url", cfg.OpenUsageURL,
-			"hint", "Make sure OpenUsage app is running")
+		// Check OpenUsage availability
+		if !client.IsHealthy() {
+			logger.Warn("OpenUsage API not available at startup",
+				"url", cfg.OpenUsageURL,
+				"hint", "Make sure OpenUsage app is running or set OPENUSAGE_ENABLED=false for native-only mode")
+		}
+	} else {
+		logger.Info("OpenUsage collection disabled, using native providers only")
 	}
+
+	// Build native provider registry. Each provider self-reports
+	// availability, so absent apps are silently skipped at collection time.
+	nativeRegistry := native.NewRegistry(
+		kirocli.New(),
+	)
 
 	// Create context with cancellation
 	ctx, cancel := context.WithCancel(context.Background())
@@ -75,14 +89,15 @@ func main() {
 
 	// Start HTTP server
 	httpServer, err := internalhttp.NewServer(s, cfg.ServerHost, cfg.ServerPort, logger)
-	httpServer.SetTitle(cfg.Title)
 	if err != nil {
 		logger.Error("Failed to create HTTP server", "error", err)
 		os.Exit(1)
 	}
+	httpServer.SetTitle(cfg.Title)
 
-	// Create collector with OpenUsage client
+	// Create collector with OpenUsage client (may be nil) and native providers
 	coll := collector.NewCollector(s, client, cfg.CollectionInterval, logger)
+	coll.SetNativeRegistry(nativeRegistry)
 	httpServer.SetCollector(coll)
 	httpServer.SetOpenUsageClient(client)
 
