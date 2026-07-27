@@ -2,6 +2,7 @@ package store
 
 import (
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 )
@@ -74,6 +75,75 @@ func TestNewStore_BusyTimeout(t *testing.T) {
 
 	if timeout != 5000 {
 		t.Errorf("Expected busy_timeout=5000, got %d", timeout)
+	}
+}
+
+func TestNewStoreShouldNormalizeLegacyCollectedAtWhenTimezonesAreMixed(t *testing.T) {
+	// Given: an older KST row whose wall-clock text sorts after a newer UTC row.
+	dbPath := filepath.Join(t.TempDir(), "usage.db")
+	initialStore, err := NewStore(dbPath)
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	providerID := mustCreateStoreTestProvider(t, initialStore)
+	kst := time.FixedZone("KST", 9*60*60)
+	legacyTime := time.Date(2026, 7, 27, 1, 58, 15, 0, kst)
+	newerTime := time.Date(2026, 7, 27, 0, 7, 43, 0, time.UTC)
+	for _, snapshot := range []*UsageSnapshot{
+		{ProviderID: providerID, Metric: "credits", Used: 100, CollectedAt: legacyTime},
+		{ProviderID: providerID, Metric: "credits", Used: 200, CollectedAt: newerTime},
+	} {
+		_, err := initialStore.db.Exec(`
+			INSERT INTO usage_snapshots
+			(provider_id, metric, used, collected_at, raw_json)
+			VALUES (?, ?, ?, ?, '')
+		`, snapshot.ProviderID, snapshot.Metric, snapshot.Used, snapshot.CollectedAt)
+		if err != nil {
+			t.Fatalf("inserting legacy snapshot error = %v", err)
+		}
+	}
+	if err := initialStore.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+
+	// When: the existing database is reopened.
+	reopenedStore, err := NewStore(dbPath)
+	if err != nil {
+		t.Fatalf("NewStore() error = %v", err)
+	}
+	defer func() {
+		if err := reopenedStore.Close(); err != nil {
+			t.Errorf("Close() error = %v", err)
+		}
+	}()
+	latest, err := reopenedStore.GetLatestUsage(providerID, "credits")
+	if err != nil {
+		t.Fatalf("GetLatestUsage() error = %v", err)
+	}
+
+	// Then: chronological order wins and all stored collection times are UTC.
+	if latest == nil {
+		t.Fatal("GetLatestUsage() = nil, want latest snapshot")
+	}
+	if latest.Used != 200 {
+		t.Errorf("latest Used = %v, want 200", latest.Used)
+	}
+	rows, err := reopenedStore.db.Query(`SELECT collected_at FROM usage_snapshots`)
+	if err != nil {
+		t.Fatalf("querying collected_at error = %v", err)
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var collectedAt time.Time
+		if err := rows.Scan(&collectedAt); err != nil {
+			t.Fatalf("scanning collected_at error = %v", err)
+		}
+		if collectedAt.Location() != time.UTC {
+			t.Errorf("collected_at location = %v, want UTC", collectedAt.Location())
+		}
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("iterating collected_at rows error = %v", err)
 	}
 }
 

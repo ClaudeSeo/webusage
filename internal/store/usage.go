@@ -24,7 +24,7 @@ func (s *Store) CreateUsageSnapshot(snapshot *UsageSnapshot) (int64, error) {
 		(provider_id, metric, used, "limit", reset_at, collected_at, raw_json)
 		VALUES (?, ?, ?, ?, ?, ?, ?)
 	`, snapshot.ProviderID, snapshot.Metric, snapshot.Used,
-		snapshot.Limit, snapshot.ResetAt, snapshot.CollectedAt, snapshot.RawJSON)
+		snapshot.Limit, snapshot.ResetAt, snapshot.CollectedAt.UTC(), snapshot.RawJSON)
 	if err != nil {
 		return 0, err
 	}
@@ -58,7 +58,7 @@ func (s *Store) CreateUsageSnapshots(snapshots []*UsageSnapshot) error {
 	for _, snap := range snapshots {
 		_, err := stmt.Exec(
 			snap.ProviderID, snap.Metric, snap.Used,
-			snap.Limit, snap.ResetAt, snap.CollectedAt, snap.RawJSON,
+			snap.Limit, snap.ResetAt, snap.CollectedAt.UTC(), snap.RawJSON,
 		)
 		if err != nil {
 			return err
@@ -89,7 +89,7 @@ func (s *Store) CreateUsageSnapshotsIdempotent(snapshots []*UsageSnapshot) error
 
 	for _, snap := range snapshots {
 		// Round collected_at to nearest second for idempotency comparison
-		roundedTime := snap.CollectedAt.Truncate(time.Second)
+		roundedTime := snap.CollectedAt.UTC().Truncate(time.Second)
 
 		result, err := stmt.Exec(
 			snap.ProviderID, snap.Metric, snap.Used,
@@ -193,6 +193,8 @@ func (s *Store) GetLatestUsageByProvider(providerID int64) ([]*UsageSnapshot, er
 func (s *Store) GetUsageTrends(providerID int64, metric string, startTime, endTime time.Time) ([]*UsageSnapshot, error) {
 	var query string
 	var args []interface{}
+	startTime = startTime.UTC()
+	endTime = endTime.UTC()
 
 	if metric == "" {
 		// Return all metrics
@@ -254,7 +256,7 @@ func (s *Store) GetAggregatedUsage(providerID int64, metric string, startTime, e
 		SELECT SUM(used)
 		FROM usage_snapshots
 		WHERE provider_id = ? AND metric = ? AND collected_at BETWEEN ? AND ?
-	`, providerID, metric, startTime, endTime).Scan(&total)
+	`, providerID, metric, startTime.UTC(), endTime.UTC()).Scan(&total)
 	if err != nil {
 		return 0, err
 	}
@@ -269,7 +271,7 @@ func (s *Store) DeleteOldUsage(olderThan time.Time) (int64, error) {
 	result, err := s.db.Exec(`
 		DELETE FROM usage_snapshots
 		WHERE collected_at < ?
-	`, olderThan)
+	`, olderThan.UTC())
 	if err != nil {
 		return 0, err
 	}
@@ -320,7 +322,7 @@ func (s *Store) GetHeatmapData(providerID int64, startTime, endTime time.Time) (
 			GROUP BY date
 			ORDER BY date
 		`
-		args = []interface{}{startTime, endTime}
+		args = []interface{}{startTime.UTC(), endTime.UTC()}
 	} else {
 		query = `
 			SELECT SUBSTR(collected_at, 1, 10) as date, SUM(used) as total_used
@@ -329,7 +331,7 @@ func (s *Store) GetHeatmapData(providerID int64, startTime, endTime time.Time) (
 			GROUP BY date
 			ORDER BY date
 		`
-		args = []interface{}{providerID, startTime, endTime}
+		args = []interface{}{providerID, startTime.UTC(), endTime.UTC()}
 	}
 
 	rows, err := s.db.Query(query, args...)

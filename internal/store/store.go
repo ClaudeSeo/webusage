@@ -3,6 +3,7 @@ package store
 import (
 	"database/sql"
 	"fmt"
+	"time"
 
 	_ "modernc.org/sqlite"
 )
@@ -27,6 +28,11 @@ func NewStore(dbPath string) (*Store, error) {
 
 	// Initialize schema
 	if err := initSchema(db); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+
+	if err := normalizeCollectedAtUTC(db); err != nil {
 		_ = db.Close()
 		return nil, err
 	}
@@ -104,6 +110,75 @@ func initSchema(db *sql.DB) error {
 		return fmt.Errorf("creating schema: %w", err)
 	}
 
+	return nil
+}
+
+// normalizeCollectedAtUTC repairs rows written before collection timestamps were
+// standardized on UTC. Mixed timezone strings do not sort chronologically in SQLite.
+func normalizeCollectedAtUTC(db *sql.DB) error {
+	rows, err := db.Query(`
+		SELECT id, collected_at
+		FROM usage_snapshots
+		WHERE collected_at NOT LIKE '% +0000 UTC'
+	`)
+	if err != nil {
+		return fmt.Errorf("querying non-UTC collection timestamps: %w", err)
+	}
+
+	type timestampUpdate struct {
+		id          int64
+		collectedAt time.Time
+	}
+	var updates []timestampUpdate
+	for rows.Next() {
+		var update timestampUpdate
+		if err := rows.Scan(&update.id, &update.collectedAt); err != nil {
+			_ = rows.Close()
+			return fmt.Errorf("scanning non-UTC collection timestamp: %w", err)
+		}
+		update.collectedAt = update.collectedAt.UTC()
+		updates = append(updates, update)
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		return fmt.Errorf("iterating non-UTC collection timestamps: %w", err)
+	}
+	if err := rows.Close(); err != nil {
+		return fmt.Errorf("closing non-UTC collection timestamp rows: %w", err)
+	}
+	if len(updates) == 0 {
+		return nil
+	}
+
+	tx, err := db.Begin()
+	if err != nil {
+		return fmt.Errorf("starting collection timestamp normalization: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	for _, update := range updates {
+		result, err := tx.Exec(`
+			UPDATE OR IGNORE usage_snapshots
+			SET collected_at = ?
+			WHERE id = ?
+		`, update.collectedAt, update.id)
+		if err != nil {
+			return fmt.Errorf("normalizing collection timestamp %d: %w", update.id, err)
+		}
+		rowsAffected, err := result.RowsAffected()
+		if err != nil {
+			return fmt.Errorf("checking normalized collection timestamp %d: %w", update.id, err)
+		}
+		if rowsAffected == 0 {
+			if _, err := tx.Exec(`DELETE FROM usage_snapshots WHERE id = ?`, update.id); err != nil {
+				return fmt.Errorf("removing duplicate collection timestamp %d: %w", update.id, err)
+			}
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("committing collection timestamp normalization: %w", err)
+	}
 	return nil
 }
 
