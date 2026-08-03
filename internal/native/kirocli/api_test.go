@@ -145,7 +145,7 @@ func TestCollectShouldReturnMetricsWhenLiveCallsMocked(t *testing.T) {
 	}
 
 	// When
-	metrics, err := k.Collect()
+	metrics, err := k.Collect(context.Background())
 
 	// Then: 1 credits. No token in RawJSON.
 	if err != nil {
@@ -171,7 +171,7 @@ func TestCollectLiveShouldCallRealAPI(t *testing.T) {
 	}
 
 	// When
-	metrics, err := New().Collect()
+	metrics, err := New().Collect(context.Background())
 
 	// Then: returns metric without error + token substring must not appear in RawJSON.
 	if err != nil {

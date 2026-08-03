@@ -3,7 +3,10 @@
 // It lets webusage gather data on its own even when OpenUsage is not running.
 package native
 
-import "time"
+import (
+	"context"
+	"time"
+)
 
 // Provider is a provider that collects usage from local sources without OpenUsage.
 // Implementations must be safe for concurrent calls from the collector.
@@ -20,7 +23,11 @@ type Provider interface {
 	// Collect reads local usage state and returns canonical metrics.
 	// A nil error with an empty slice means "provider present but no usage yet";
 	// the collector logs zero metrics and continues.
-	Collect() ([]Metric, error)
+	//
+	// ctx carries the service lifetime: implementations that perform external
+	// I/O must propagate it so shutdown is not blocked by an in-flight request,
+	// and must additionally bound each request with a finite timeout.
+	Collect(ctx context.Context) ([]Metric, error)
 }
 
 // Metric is a single canonical usage data point emitted by a native provider.

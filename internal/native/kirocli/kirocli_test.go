@@ -1,6 +1,7 @@
 package kirocli
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"path/filepath"
@@ -360,7 +361,7 @@ func TestCollectShouldReturnErrorWhenTokenExpired(t *testing.T) {
 	k := newWithDB(dbPath)
 
 	// When
-	_, err := k.Collect()
+	_, err := k.Collect(context.Background())
 
 	// Then: expired error.
 	if err == nil {

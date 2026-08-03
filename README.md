@@ -103,6 +103,7 @@ webusage reads configuration from environment variables. Place your `.env` file 
 | `DB_PATH` | `$WEBUSAGE_HOME/usage.db` | SQLite database file path (overrides `WEBUSAGE_HOME`) |
 | `COLLECTION_INTERVAL` | `900` | Usage polling interval in seconds (15 min default) |
 | `OPENUSAGE_URL` | `http://127.0.0.1:6736` | OpenUsage API endpoint |
+| `OLLAMA_API_KEY` | _(unset)_ | [Ollama Cloud](https://ollama.com/settings/keys) API key. When set, webusage collects Ollama usage natively; when unset, the provider is skipped |
 
 ## API Reference
 

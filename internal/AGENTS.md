@@ -12,6 +12,9 @@ runtime defaults are defined by the parent guide.
 - `native`: provider interface, normalized metric type, and registry.
 - `native/kirocli`: read-only Kiro CLI credential lookup, live usage request,
   and response-to-metric mapping.
+- `native/ollama`: Ollama Cloud usage request keyed by `OLLAMA_API_KEY` and
+  response-to-metric mapping. It has no local state; the key is injected by the
+  composition root.
 - `collector`: coordinates OpenUsage and native collection, provider locking,
   normalization, idempotent persistence, and job state.
 - `store`: SQLite schema and queries for providers, snapshots, and metric
@@ -63,9 +66,15 @@ runtime defaults are defined by the parent guide.
   `https://management.<region>.kiro.dev/Get-Usage-Limits`.
 - Derive the management region from `profileArn`; do not substitute the token's
   identity-center region.
-- Current Kiro I/O uses `context.Background` and `http.DefaultClient` without a
-  timeout. New or changed external I/O must accept service cancellation and set a
-  finite timeout; use `httptest.Server` unless `LIVE_TEST=true`.
+- `native/ollama` sends `OLLAMA_API_KEY` only as a bearer token to the fixed
+  `https://ollama.com/api/usage` endpoint. The key must never enter logs,
+  errors, stored `RawJSON`, test failure output, or HTTP responses. Keep the
+  host hardcoded and keep using the stdlib redirect policy, which drops
+  `Authorization` on a redirect to a different domain; `ollama.com` subdomains
+  still receive it.
+- `native.Provider.Collect` receives the collector context, and every native
+  HTTP client sets a finite timeout. New or changed external I/O must preserve
+  both; use `httptest.Server` unless `LIVE_TEST=true`.
 
 ## Test Deltas
 
@@ -78,3 +87,6 @@ runtime defaults are defined by the parent guide.
 - `native/kirocli` tests must cover request host/path/headers, token expiry,
   response aggregation, reset-time fallbacks, and absence of credential data in
   persisted raw responses.
+- `native/ollama` tests must cover request URL/headers, rejected-key handling,
+  ratio-to-percent scaling, unreported windows staying unpersisted, context
+  cancellation, and absence of the API key in errors and raw responses.

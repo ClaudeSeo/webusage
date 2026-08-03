@@ -30,6 +30,16 @@ var ProviderCycleConfigs = map[string]ProviderCycleConfig{
 		LimitType:     LimitTypeLimited,
 		PrimaryMetric: "credits",
 	},
+	// ollama reports a 5-hour session ratio and a 7-day weekly ratio; weekly is
+	// the headline quota. Ollama's real weekly boundary is per-account (anchored
+	// to the account's own billing day) and /api/usage exposes no reset
+	// timestamp at all, so these boundaries are a calendar-week approximation:
+	// the ratios themselves are exact, only the derived cycle window is not.
+	"ollama": {
+		CycleType:     CycleTypeWeekly,
+		LimitType:     LimitTypeLimited,
+		PrimaryMetric: "weekly",
+	},
 }
 
 // GetProviderCycleConfig returns cycle config for a provider
@@ -179,6 +189,7 @@ var MetricLabels = map[string]string{
 	"bonus_credits":        "보너스 크레딧",
 	"premium_interactions": "프리미엄 사용량",
 	"chat":                 "채팅",
+	"cost":                 "비용 (4주, USD)",
 }
 
 // MetricLabel returns the Korean display label for a metric key

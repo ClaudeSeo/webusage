@@ -27,6 +27,11 @@ type Config struct {
 	// Set to false when using only native providers (without the OpenUsage app).
 	OpenUsageEnabled bool
 
+	// OllamaAPIKey authenticates the Ollama Cloud usage API. The Ollama native
+	// provider has no local state to discover, so an empty value is what marks
+	// it unavailable. Treat as a secret: never log or serialize it.
+	OllamaAPIKey string
+
 	// Title is the site title suffix. When non-empty, "WebUsage - <Title>" is displayed
 	Title string
 }
@@ -47,6 +52,7 @@ func LoadConfig() (*Config, error) {
 		CollectionInterval: time.Duration(interval) * time.Second,
 		OpenUsageURL:       getEnv("OPENUSAGE_URL", "http://127.0.0.1:6736"),
 		OpenUsageEnabled:   getBoolEnv("OPENUSAGE_ENABLED", true),
+		OllamaAPIKey:       getEnv("OLLAMA_API_KEY", ""),
 		Title:              getEnv("TITLE", ""),
 	}, nil
 }

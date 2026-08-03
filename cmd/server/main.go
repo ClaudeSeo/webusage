@@ -13,6 +13,7 @@ import (
 	internalhttp "github.com/ClaudeSeo/webusage/internal/http"
 	"github.com/ClaudeSeo/webusage/internal/native"
 	"github.com/ClaudeSeo/webusage/internal/native/kirocli"
+	"github.com/ClaudeSeo/webusage/internal/native/ollama"
 	"github.com/ClaudeSeo/webusage/internal/openusage"
 	"github.com/ClaudeSeo/webusage/internal/store"
 )
@@ -35,7 +36,9 @@ func main() {
 		"db_path", cfg.DBPath,
 		"server_host", cfg.ServerHost,
 		"server_port", cfg.ServerPort,
-		"openusage_url", cfg.OpenUsageURL)
+		"openusage_url", cfg.OpenUsageURL,
+		// Log presence only — the key itself must never reach the log stream.
+		"ollama_configured", cfg.OllamaAPIKey != "")
 
 	// Initialize database
 	s, err := store.NewStore(cfg.DBPath)
@@ -71,6 +74,7 @@ func main() {
 	// availability, so absent apps are silently skipped at collection time.
 	nativeRegistry := native.NewRegistry(
 		kirocli.New(),
+		ollama.New(cfg.OllamaAPIKey),
 	)
 
 	// Create context with cancellation

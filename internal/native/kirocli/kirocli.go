@@ -137,7 +137,7 @@ func (k *Kirocli) Available() bool {
 
 // Collect reads the auth_kv token (erroring on expiry) and calls Get-Usage-Limits to collect metrics.
 // kiro-cli handles refresh, so an expired token returns ErrTokenExpired.
-func (k *Kirocli) Collect() ([]native.Metric, error) {
+func (k *Kirocli) Collect(ctx context.Context) ([]native.Metric, error) {
 	if k.dataDBPath == "" {
 		return nil, ErrUnavailable
 	}
@@ -155,7 +155,7 @@ func (k *Kirocli) Collect() ([]native.Metric, error) {
 	}
 	region := regionFromProfileArn(profileArn)
 
-	resp, err := getUsageLimits(context.Background(), k.httpClient, region, tok.AccessToken, profileArn)
+	resp, err := getUsageLimits(ctx, k.httpClient, region, tok.AccessToken, profileArn)
 	if err != nil {
 		return nil, err
 	}

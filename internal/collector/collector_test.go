@@ -19,11 +19,19 @@ type fakeProvider struct {
 	available bool
 	metrics   []native.Metric
 	err       error
+	lastCall  *fakeProviderCall
 }
 
-func (f *fakeProvider) Name() string                      { return f.name }
-func (f *fakeProvider) Available() bool                   { return f.available }
-func (f *fakeProvider) Collect() ([]native.Metric, error) { return f.metrics, f.err }
+type fakeProviderCall struct {
+	ctx context.Context
+}
+
+func (f *fakeProvider) Name() string    { return f.name }
+func (f *fakeProvider) Available() bool { return f.available }
+func (f *fakeProvider) Collect(ctx context.Context) ([]native.Metric, error) {
+	f.lastCall = &fakeProviderCall{ctx: ctx}
+	return f.metrics, f.err
+}
 
 func newTestStore(t *testing.T) *store.Store {
 	t.Helper()
@@ -144,6 +152,29 @@ func TestCollectAllShouldSkipUnavailableNativeProviders(t *testing.T) {
 	// Then: neither a provider row nor a snapshot is created.
 	if _, err := s.GetProviderByName("kiro"); err == nil {
 		t.Error("expected no provider row for unavailable provider")
+	}
+}
+
+func TestCollectAllShouldPropagateServiceCancellationToNativeProviders(t *testing.T) {
+	// Given: an available native provider and an already-cancelled collection context.
+	s := newTestStore(t)
+	prov := &fakeProvider{name: "kiro", available: true, metrics: []native.Metric{{Metric: "credits", Used: 1}}}
+	c := newTestCollector(t, s, prov)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	// When
+	if err := c.CollectAll(ctx); err != nil {
+		t.Fatalf("CollectAll: %v", err)
+	}
+
+	// Then: the provider observes the cancellation, so a provider doing external
+	// I/O can abort its request instead of blocking shutdown.
+	if prov.lastCall == nil {
+		t.Fatal("Collect was not called")
+	}
+	if prov.lastCall.ctx == nil || prov.lastCall.ctx.Err() == nil {
+		t.Error("Collect received a context that does not carry the service cancellation")
 	}
 }
 

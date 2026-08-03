@@ -143,7 +143,7 @@ func (c *Collector) collectNative(ctx context.Context) {
 		if !p.Available() {
 			continue
 		}
-		metrics, err := p.Collect()
+		metrics, err := p.Collect(ctx)
 		if err != nil {
 			c.logger.Warn("Native collection failed", "provider", p.Name(), "error", err)
 			c.updateJobState(p.Name(), err)

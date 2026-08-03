@@ -9,8 +9,9 @@ The runtime supports two collection paths:
 
 - `internal/openusage` reads the local OpenUsage HTTP API when
   `OPENUSAGE_ENABLED` is enabled.
-- `internal/native` reads provider-specific local state. The registered native
-  provider is currently `internal/native/kirocli`.
+- `internal/native` reads provider-specific state without OpenUsage. The
+  registered native providers are `internal/native/kirocli` (local credential
+  plus live API) and `internal/native/ollama` (API key from the environment).
 
 `cmd/server/main.go` is the composition root. It loads configuration, opens the
 store, registers providers, and runs the collector and HTTP server under one
@@ -59,13 +60,17 @@ concurrency, or shared-store changes.
 - Defaults are `SERVER_HOST=127.0.0.1`, `SERVER_PORT=8080`,
   `DB_PATH=./data/usage.db`, `COLLECTION_INTERVAL=900`,
   `OPENUSAGE_URL=http://127.0.0.1:6736`, and
-  `OPENUSAGE_ENABLED=true`.
+  `OPENUSAGE_ENABLED=true`. `OLLAMA_API_KEY` has no default; leaving it unset
+  is how the Ollama provider is disabled.
 - Set `OPENUSAGE_ENABLED=false` for native-only collection. A missing native
   provider is skipped rather than treated as a service failure.
 - The collector runs once at startup and then on each collection interval.
-- `SIGINT` and `SIGTERM` initiate shutdown through context cancellation, but
-  current native I/O has no cancellation or finite timeout. Changes to native
-  I/O must close that gap so shutdown is not blocked by an external request.
+- `SIGINT` and `SIGTERM` initiate shutdown through context cancellation. The
+  collector loop's context reaches `native.Provider.Collect`, and each native
+  HTTP client sets a finite timeout. New native I/O must keep both properties
+  so shutdown is never blocked by an external request. The HTTP-triggered
+  collection handlers still pass `context.Background()`, so a manually
+  triggered collection is bounded only by those client timeouts.
 - Templates are parsed at server construction. Template names, template data,
   and client-side selectors form one contract and must change together.
 
