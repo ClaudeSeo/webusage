@@ -4,11 +4,183 @@ import (
 	"fmt"
 	nethttp "net/http"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/ClaudeSeo/webusage/internal/domain"
 	"github.com/ClaudeSeo/webusage/internal/store"
 )
+
+// metricSnapshotSet keeps the latest row, all trend points, and the
+// deterministic G1 projection inputs together. HTTP handlers only shape the
+// result; cycle, pace, reset, weak-estimate, and severity rules stay in
+// internal/domain.
+type metricSnapshotSet struct {
+	Metric     string
+	Latest     *store.UsageSnapshot
+	Trend      []domain.TrendDataPoint
+	Projection domain.MetricProjection
+}
+
+func orderedMetricSnapshots(s *store.Store, provider *store.Provider, snapshots []*store.UsageSnapshot) ([]*store.UsageSnapshot, error) {
+	byMetric := make(map[string]*store.UsageSnapshot, len(snapshots))
+	catalog := make([]string, 0, len(snapshots))
+	for _, snapshot := range snapshots {
+		if snapshot == nil {
+			continue
+		}
+		byMetric[snapshot.Metric] = snapshot
+		catalog = append(catalog, snapshot.Metric)
+	}
+	preference, err := s.GetMetricPreference(provider.ID)
+	if err != nil {
+		return nil, err
+	}
+	items := domain.ReconcileMetricPreferences(preference.Items, catalog)
+	ordered := make([]*store.UsageSnapshot, 0, len(catalog))
+	seen := make(map[string]struct{}, len(catalog))
+	for _, item := range items {
+		// Mark catalog entries present in a saved preference even when hidden;
+		// otherwise the fallback tail would accidentally re-enable them.
+		if item.Available {
+			seen[item.Metric] = struct{}{}
+		}
+		if !item.Available || !item.Visible {
+			continue
+		}
+		if snapshot := byMetric[item.Metric]; snapshot != nil {
+			ordered = append(ordered, snapshot)
+		}
+	}
+	// Unknown/new metrics remain available even before a preference row is
+	// saved. The store's latest query is stable by metric name, so this tail is
+	// deterministic as well.
+	for _, snapshot := range snapshots {
+		if snapshot == nil {
+			continue
+		}
+		if _, ok := seen[snapshot.Metric]; ok {
+			continue
+		}
+		ordered = append(ordered, snapshot)
+		seen[snapshot.Metric] = struct{}{}
+	}
+	return ordered, nil
+}
+
+func loadMetricSnapshotSets(s *store.Store, provider *store.Provider, now time.Time) ([]metricSnapshotSet, error) {
+	latest, err := s.GetLatestUsageByProvider(provider.ID)
+	if err != nil {
+		return nil, err
+	}
+	ordered, err := orderedMetricSnapshots(s, provider, latest)
+	if err != nil {
+		return nil, err
+	}
+	sets := make([]metricSnapshotSet, 0, len(ordered))
+	for _, snapshot := range ordered {
+		start := now.Add(-30 * 24 * time.Hour)
+		trendRows, err := s.GetUsageTrends(provider.ID, snapshot.Metric, start, now)
+		if err != nil {
+			trendRows = nil
+		}
+		trend := make([]domain.TrendDataPoint, 0, len(trendRows))
+		for _, row := range trendRows {
+			trend = append(trend, domain.TrendDataPoint{Timestamp: row.CollectedAt, Value: row.Used, Metric: row.Metric})
+		}
+		cycle := domain.ResolveMetricCycleType(provider.Name, snapshot.Metric, domain.GetProviderCycleConfig(provider.Name).CycleType)
+		projection := domain.ProjectMetric(domain.MetricProjectionInput{
+			CycleType: cycle,
+			Limit:     snapshot.Limit,
+			ResetAt:   snapshot.ResetAt,
+			Now:       now,
+			Snapshots: trend,
+		})
+		sets = append(sets, metricSnapshotSet{Metric: snapshot.Metric, Latest: snapshot, Trend: trend, Projection: projection})
+	}
+	return sets, nil
+}
+
+func primaryMetricSet(provider *store.Provider, sets []metricSnapshotSet) *metricSnapshotSet {
+	if len(sets) == 0 {
+		return nil
+	}
+	config := domain.GetProviderCycleConfig(provider.Name)
+	for i := range sets {
+		if sets[i].Metric == config.PrimaryMetric {
+			return &sets[i]
+		}
+	}
+	for i := range sets {
+		if sets[i].Latest != nil && sets[i].Latest.Limit != nil {
+			return &sets[i]
+		}
+	}
+	return &sets[0]
+}
+
+func metricNames(sets []metricSnapshotSet) []string {
+	names := make([]string, 0, len(sets))
+	for _, set := range sets {
+		names = append(names, set.Metric)
+	}
+	return names
+}
+
+func metricNamesFromSnapshots(snapshots []*store.UsageSnapshot) []string {
+	names := make([]string, 0, len(snapshots))
+	for _, snapshot := range snapshots {
+		if snapshot != nil {
+			names = append(names, snapshot.Metric)
+		}
+	}
+	return names
+}
+
+func metricProjectionJSON(set metricSnapshotSet) map[string]interface{} {
+	p := set.Projection
+	latest := set.Latest
+	result := map[string]interface{}{
+		"metric":                   set.Metric,
+		"cycle_type":               string(p.CycleType),
+		"cycle_label":              p.CycleLabel,
+		"has_current":              p.HasCurrent,
+		"current_usage":            p.CurrentUsage,
+		"usage_percent":            p.CurrentPercent,
+		"current_percent":          p.CurrentPercent,
+		"has_pace":                 p.HasPace,
+		"pace_per_hour":            p.PacePerHour,
+		"current_pace":             p.PacePerHour,
+		"observation_window_hours": p.ObservationWindowHours,
+		"has_projection":           p.HasProjection,
+		"has_forecast":             p.HasForecast,
+		"forecast_usable":          p.ForecastUsable,
+		"weak_estimate":            p.WeakEstimate,
+		"severity":                 string(p.Severity),
+		"time_remaining":           p.TimeRemainingText,
+		"hours_until_reset":        p.HoursUntilReset,
+		"projected_usage":          p.ProjectedUsage,
+		"projected_percent":        p.ProjectedPercent,
+		"cycle_start":              p.CycleStart,
+		"cycle_end":                p.CycleEnd,
+		"last_updated":             nil,
+	}
+	if latest != nil {
+		result["limit"] = latest.Limit
+		result["limit_value"] = latest.Limit
+		result["reset_at"] = latest.ResetAt
+		result["last_updated"] = latest.CollectedAt
+	}
+	return result
+}
+
+func safeCollectionError(err *string) *string {
+	if err == nil || *err == "" {
+		return nil
+	}
+	message := "collection failed"
+	return &message
+}
 
 // getBucketSizeForCycle determines the appropriate bucket size based on cycle type
 func getBucketSizeForCycle(cycleType domain.CycleType, requestedBucket string) string {
@@ -109,7 +281,7 @@ func aggregateByDay(data []domain.TrendDataPoint) []domain.TrendDataPoint {
 
 // handleAPICurrent returns current cycle-aware usage for all providers
 // GET /api/current
-func (s *Server) handleAPICurrent(w nethttp.ResponseWriter, r *nethttp.Request) {
+func (s *Server) handleAPICurrentLegacy(w nethttp.ResponseWriter, r *nethttp.Request) {
 	if r.Method != nethttp.MethodGet {
 		nethttp.Error(w, "Method not allowed", nethttp.StatusMethodNotAllowed)
 		return
@@ -228,6 +400,86 @@ func (s *Server) handleAPICurrent(w nethttp.ResponseWriter, r *nethttp.Request) 
 	s.jsonResponse(w, result)
 }
 
+// handleAPICurrent returns the legacy provider-level fields together with a
+// per-metric projection map. The metric map is additive, so existing clients
+// can keep decoding CurrentCycleInfo while the dashboard uses richer data.
+func (s *Server) handleAPICurrent(w nethttp.ResponseWriter, r *nethttp.Request) {
+	if r.Method != nethttp.MethodGet {
+		nethttp.Error(w, "Method not allowed", nethttp.StatusMethodNotAllowed)
+		return
+	}
+	providers, err := s.store.ListProviders()
+	if err != nil {
+		s.jsonError(w, "Failed to list providers", nethttp.StatusInternalServerError)
+		return
+	}
+	now := time.Now().UTC()
+	result := make(map[string]interface{}, len(providers))
+	for _, provider := range providers {
+		if !provider.Enabled {
+			continue
+		}
+		sets, err := loadMetricSnapshotSets(s.store, provider, now)
+		if err != nil {
+			s.logger.Warn("Failed to get metric snapshots", "provider", provider.Name, "error", err)
+			continue
+		}
+		cycleConfig := domain.GetProviderCycleConfig(provider.Name)
+		metrics := make(map[string]interface{}, len(sets))
+		for _, set := range sets {
+			metrics[set.Metric] = metricProjectionJSON(set)
+		}
+		info := map[string]interface{}{
+			"provider_id":              provider.Name,
+			"display_name":             getDisplayName(provider.Name),
+			"enabled":                  provider.Enabled,
+			"cycle_type":               string(cycleConfig.CycleType),
+			"limit_type":               string(cycleConfig.LimitType),
+			"current_usage":            0.0,
+			"usage_percent":            0.0,
+			"will_exceed_before_reset": false,
+			"current_pace":             0.0,
+			"baseline_pace":            0.0,
+			"pace_vs_baseline_ratio":   0.0,
+			"metrics":                  metrics,
+			"available_metrics":        metricNames(sets),
+			"collection_error":         nil,
+		}
+		if safeErr := safeCollectionError(provider.LastError); safeErr != nil {
+			info["collection_error"] = *safeErr
+			info["error"] = *safeErr
+		}
+		primary := primaryMetricSet(provider, sets)
+		if primary != nil {
+			projection := primary.Projection
+			latest := primary.Latest
+			info["primary_metric"] = primary.Metric
+			info["current_usage"] = projection.CurrentUsage
+			info["usage_percent"] = projection.CurrentPercent
+			info["cycle_start"] = projection.CycleStart
+			info["cycle_end"] = projection.CycleEnd
+			info["time_remaining"] = projection.TimeRemainingText
+			info["current_pace"] = projection.PacePerHour
+			if latest != nil {
+				info["limit_value"] = latest.Limit
+				info["last_updated"] = latest.CollectedAt.Format(time.RFC3339)
+			}
+			if len(primary.Trend) > 1 {
+				_, baseline, ratio := domain.CalculatePace(primary.Trend)
+				info["baseline_pace"] = baseline
+				info["pace_vs_baseline_ratio"] = ratio
+			}
+			if projection.HasPace && latest != nil && latest.Limit != nil && projection.CycleEnd != nil {
+				forecastAt, willExceed := domain.ForecastLimitExceedTime(latest.Used, latest.Limit, projection.PacePerHour, projection.CycleEnd)
+				info["forecast_limit_at"] = forecastAt
+				info["will_exceed_before_reset"] = willExceed
+			}
+		}
+		result[provider.Name] = info
+	}
+	s.jsonResponse(w, result)
+}
+
 // handleAPITrends returns cycle-aware trend data
 // GET /api/trends?provider_id=&range=&view=&mode=&bucket=
 // If provider_id is omitted, return trend data for all active providers based on range
@@ -266,11 +518,38 @@ func (s *Server) handleAPITrends(w nethttp.ResponseWriter, r *nethttp.Request) {
 	}
 
 	cycleConfig := domain.GetProviderCycleConfig(p.Name)
-	now := time.Now()
+	now := time.Now().UTC()
+	latestSnapshots, _ := s.store.GetLatestUsageByProvider(p.ID)
+	requestedMetric := r.URL.Query().Get("metric")
+	primaryMetric := requestedMetric
+	if primaryMetric == "" {
+		primaryMetric = cycleConfig.PrimaryMetric
+	}
+	if primaryMetric == "" {
+		for _, snapshot := range latestSnapshots {
+			if snapshot != nil {
+				primaryMetric = snapshot.Metric
+				break
+			}
+		}
+	}
+	var latestMetric *store.UsageSnapshot
+	for _, snapshot := range latestSnapshots {
+		if snapshot != nil && snapshot.Metric == primaryMetric {
+			latestMetric = snapshot
+			break
+		}
+	}
+	metricCycle := domain.ResolveMetricCycleType(p.Name, primaryMetric, cycleConfig.CycleType)
 
 	// Calculate time range based on view
 	var startTime, endTime time.Time
-	cycleStart, cycleEnd := domain.CalculateCycleBoundaries(cycleConfig.CycleType, now, nil)
+	cycleStart, cycleEnd := domain.CalculateMetricCycleBoundaries(metricCycle, now, func() *time.Time {
+		if latestMetric == nil {
+			return nil
+		}
+		return latestMetric.ResetAt
+	}())
 
 	switch view {
 	case "current":
@@ -302,8 +581,6 @@ func (s *Server) handleAPITrends(w nethttp.ResponseWriter, r *nethttp.Request) {
 		endTime = now
 	}
 
-	primaryMetric := cycleConfig.PrimaryMetric
-
 	// Get trend data
 	snapshots, err := s.store.GetUsageTrends(p.ID, primaryMetric, startTime, endTime)
 	if err != nil {
@@ -324,7 +601,19 @@ func (s *Server) handleAPITrends(w nethttp.ResponseWriter, r *nethttp.Request) {
 				value = snap.Used - snapshots[0].Used
 			}
 		case "rate":
-			// Rate of change (not implemented in this version)
+			// Emit a non-negative consecutive delta. A decrease marks a
+			// cycle reset, so it contributes zero rather than borrowing a
+			// negative rate from the previous cycle. The first point has no
+			// predecessor and is therefore explicitly zero.
+			if i := len(points); i == 0 {
+				value = 0
+			} else {
+				previous := snapshots[i-1].Used
+				value -= previous
+				if value < 0 {
+					value = 0
+				}
+			}
 		}
 
 		points = append(points, domain.TrendDataPoint{
@@ -335,23 +624,24 @@ func (s *Server) handleAPITrends(w nethttp.ResponseWriter, r *nethttp.Request) {
 	}
 
 	// Apply bucket aggregation
-	bucketSize := getBucketSizeForCycle(cycleConfig.CycleType, bucket)
+	bucketSize := getBucketSizeForCycle(metricCycle, bucket)
 	points = aggregateDataByBucket(points, bucketSize)
 
-	result := domain.ProviderTrends{
-		ProviderID: providerID,
-		CycleType:  string(cycleConfig.CycleType),
-		View:       view,
-		Mode:       mode,
-		Bucket:     bucketSize,
-		Data:       points,
+	result := map[string]interface{}{
+		"provider_id":       providerID,
+		"cycle_type":        string(metricCycle),
+		"view":              view,
+		"mode":              mode,
+		"bucket":            bucketSize,
+		"data":              points,
+		"metric":            primaryMetric,
+		"available_metrics": metricNamesFromSnapshots(latestSnapshots),
 	}
-
 	if cycleStart != nil {
-		result.CycleStart = cycleStart
+		result["cycle_start"] = cycleStart
 	}
 	if cycleEnd != nil {
-		result.CycleEnd = cycleEnd
+		result["cycle_end"] = cycleEnd
 	}
 
 	s.jsonResponse(w, result)
@@ -359,7 +649,7 @@ func (s *Server) handleAPITrends(w nethttp.ResponseWriter, r *nethttp.Request) {
 
 // handleAPIForecast returns usage forecast for all providers or specific provider
 // GET /api/forecast?provider_id=
-func (s *Server) handleAPIForecast(w nethttp.ResponseWriter, r *nethttp.Request) {
+func (s *Server) handleAPIForecastLegacy(w nethttp.ResponseWriter, r *nethttp.Request) {
 	if r.Method != nethttp.MethodGet {
 		nethttp.Error(w, "Method not allowed", nethttp.StatusMethodNotAllowed)
 		return
@@ -481,6 +771,125 @@ func (s *Server) handleAPIForecast(w nethttp.ResponseWriter, r *nethttp.Request)
 	})
 }
 
+// handleAPIForecast returns provider-compatible forecast objects and additive
+// per-metric forecasts. Limit pointers remain typed throughout construction so
+// callers never lose the current-limit value through an interface assertion.
+func (s *Server) handleAPIForecast(w nethttp.ResponseWriter, r *nethttp.Request) {
+	if r.Method != nethttp.MethodGet {
+		nethttp.Error(w, "Method not allowed", nethttp.StatusMethodNotAllowed)
+		return
+	}
+	providerFilter := r.URL.Query().Get("provider_id")
+	providers, err := s.store.ListProviders()
+	if err != nil {
+		s.jsonError(w, "Failed to list providers", nethttp.StatusInternalServerError)
+		return
+	}
+	now := time.Now().UTC()
+	forecasts := make([]map[string]interface{}, 0, len(providers))
+	for _, provider := range providers {
+		if !provider.Enabled || (providerFilter != "" && provider.Name != providerFilter) {
+			continue
+		}
+		sets, err := loadMetricSnapshotSets(s.store, provider, now)
+		if err != nil {
+			continue
+		}
+		safeErr := safeCollectionError(provider.LastError)
+		primary := primaryMetricSet(provider, sets)
+		if primary == nil {
+			if safeErr != nil {
+				forecasts = append(forecasts, map[string]interface{}{
+					"provider_id":       provider.Name,
+					"display_name":      getDisplayName(provider.Name),
+					"cycle_type":        string(domain.GetProviderCycleConfig(provider.Name).CycleType),
+					"current_usage":     0.0,
+					"remaining":         0.0,
+					"confidence":        0.0,
+					"metrics":           map[string]interface{}{},
+					"available_metrics": []string{},
+					"collection_error":  *safeErr,
+					"error":             *safeErr,
+				})
+			}
+			continue
+		}
+		projection := primary.Projection
+		latest := primary.Latest
+		if latest == nil {
+			continue
+		}
+		forecast := map[string]interface{}{
+			"provider_id":       provider.Name,
+			"display_name":      getDisplayName(provider.Name),
+			"cycle_type":        string(projection.CycleType),
+			"primary_metric":    primary.Metric,
+			"current_usage":     projection.CurrentUsage,
+			"remaining":         0.0,
+			"cycle_end":         projection.CycleEnd,
+			"time_remaining":    projection.TimeRemainingText,
+			"confidence":        forecastConfidence(projection),
+			"metrics":           metricForecasts(sets),
+			"available_metrics": metricNames(sets),
+			"collection_error":  nil,
+		}
+		if latest.Limit != nil {
+			forecast["limit"] = latest.Limit
+			forecast["limit_value"] = latest.Limit
+			forecast["remaining"] = *latest.Limit - latest.Used
+			if projection.HasPace && projection.CycleEnd != nil {
+				at, exceed := domain.ForecastLimitExceedTime(latest.Used, latest.Limit, projection.PacePerHour, projection.CycleEnd)
+				forecast["forecast_limit_at"] = at
+				forecast["will_exceed_before_reset"] = exceed
+				if at != nil {
+					hours := at.Sub(now).Hours()
+					if hours < 0 {
+						hours = 0
+					}
+					forecast["hours_until_limit"] = hours
+				}
+			}
+		}
+		if safeErr != nil {
+			forecast["collection_error"] = *safeErr
+			forecast["error"] = *safeErr
+		}
+		forecasts = append(forecasts, forecast)
+	}
+	if providerFilter != "" && len(forecasts) == 1 {
+		s.jsonResponse(w, forecasts[0])
+		return
+	}
+	s.jsonResponse(w, map[string]interface{}{"forecasts": forecasts})
+}
+
+func forecastConfidence(projection domain.MetricProjection) float64 {
+	if !projection.HasForecast {
+		if projection.HasPace {
+			return 0.5
+		}
+		return 0
+	}
+	if projection.WeakEstimate {
+		return 0.35
+	}
+	return 0.8
+}
+
+func metricForecasts(sets []metricSnapshotSet) map[string]interface{} {
+	result := make(map[string]interface{}, len(sets))
+	for _, set := range sets {
+		item := metricProjectionJSON(set)
+		if set.Latest != nil && set.Latest.Limit != nil && set.Projection.HasPace && set.Projection.CycleEnd != nil {
+			at, exceed := domain.ForecastLimitExceedTime(set.Latest.Used, set.Latest.Limit, set.Projection.PacePerHour, set.Projection.CycleEnd)
+			item["forecast_limit_at"] = at
+			item["will_exceed_before_reset"] = exceed
+		}
+		result[set.Metric] = item
+	}
+	return result
+}
+
 // handleAPIProvidersMeta returns provider metadata with cycle information
 // GET /api/providers
 func (s *Server) handleAPIProvidersMeta(w nethttp.ResponseWriter, r *nethttp.Request) {
@@ -496,16 +905,18 @@ func (s *Server) handleAPIProvidersMeta(w nethttp.ResponseWriter, r *nethttp.Req
 	}
 
 	type ProviderMeta struct {
-		ProviderID       string   `json:"provider_id"`
-		DisplayName      string   `json:"display_name"`
-		AuthMethod       string   `json:"auth_method"`
-		Enabled          bool     `json:"enabled"`
-		CycleType        string   `json:"cycle_type"`
-		LimitType        string   `json:"limit_type"`
-		Metrics          []string `json:"metrics"`
-		SupportedViews   []string `json:"supported_views"`
-		SupportedModes   []string `json:"supported_modes"`
-		SupportedBuckets []string `json:"supported_buckets"`
+		ProviderID       string                 `json:"provider_id"`
+		DisplayName      string                 `json:"display_name"`
+		AuthMethod       string                 `json:"auth_method"`
+		Enabled          bool                   `json:"enabled"`
+		CycleType        string                 `json:"cycle_type"`
+		LimitType        string                 `json:"limit_type"`
+		Metrics          []string               `json:"metrics"`
+		SupportedViews   []string               `json:"supported_views"`
+		SupportedModes   []string               `json:"supported_modes"`
+		SupportedBuckets []string               `json:"supported_buckets"`
+		MetricDetails    map[string]interface{} `json:"metric_details,omitempty"`
+		LastUpdated      *time.Time             `json:"last_updated,omitempty"`
 	}
 
 	var result []ProviderMeta
@@ -516,6 +927,7 @@ func (s *Server) handleAPIProvidersMeta(w nethttp.ResponseWriter, r *nethttp.Req
 		meta := ProviderMeta{
 			ProviderID:       p.Name,
 			DisplayName:      getDisplayName(p.Name),
+			AuthMethod:       safeAuthMethod(p),
 			Enabled:          p.Enabled,
 			CycleType:        string(cycleConfig.CycleType),
 			LimitType:        string(cycleConfig.LimitType),
@@ -524,10 +936,18 @@ func (s *Server) handleAPIProvidersMeta(w nethttp.ResponseWriter, r *nethttp.Req
 			SupportedBuckets: []string{"auto", "hour", "day", "cycle"},
 		}
 
-		// Get available metrics
-		snapshots, _ := s.store.GetLatestUsageByProvider(p.ID)
-		for _, snap := range snapshots {
-			meta.Metrics = append(meta.Metrics, snap.Metric)
+		// Get available metrics and presentation-safe projections. ConfigJSON,
+		// credential paths, source URLs, and provider errors never enter this
+		// response.
+		sets, _ := loadMetricSnapshotSets(s.store, p, time.Now().UTC())
+		meta.MetricDetails = make(map[string]interface{}, len(sets))
+		for _, set := range sets {
+			meta.Metrics = append(meta.Metrics, set.Metric)
+			meta.MetricDetails[set.Metric] = metricProjectionJSON(set)
+			if set.Latest != nil && (meta.LastUpdated == nil || set.Latest.CollectedAt.After(*meta.LastUpdated)) {
+				at := set.Latest.CollectedAt
+				meta.LastUpdated = &at
+			}
 		}
 
 		result = append(result, meta)
@@ -536,6 +956,27 @@ func (s *Server) handleAPIProvidersMeta(w nethttp.ResponseWriter, r *nethttp.Req
 	s.jsonResponse(w, map[string]interface{}{
 		"providers": result,
 	})
+}
+
+func safeAuthMethod(provider *store.Provider) string {
+	if provider == nil {
+		return ""
+	}
+	config, err := store.UnmarshalProviderConfig(provider.ConfigJSON)
+	if err == nil && config != nil {
+		method := strings.TrimSpace(config.AuthMethod)
+		if method != "" && !strings.ContainsAny(method, "\r\n:/\\") {
+			return method
+		}
+	}
+	switch provider.Name {
+	case "kirocli":
+		return "native"
+	case "ollama":
+		return "api_key"
+	default:
+		return ""
+	}
 }
 
 // handleAPIHeatmap returns heatmap data aggregated by date (GitHub contribution graph style)
@@ -672,6 +1113,25 @@ func (s *Server) handleAllProvidersTrends(w nethttp.ResponseWriter, r *nethttp.R
 				"metric":    snap.Metric,
 			})
 		}
+		if mode == "relative" || mode == "rate" {
+			for metric, trend := range metricTrends {
+				if len(trend) == 0 {
+					continue
+				}
+				baseline, _ := trend[0]["value"].(float64)
+				var previous = baseline
+				for index := range trend {
+					value, _ := trend[index]["value"].(float64)
+					if mode == "relative" {
+						trend[index]["value"] = value - baseline
+					} else {
+						trend[index]["value"] = value - previous
+					}
+					previous = value
+				}
+				metricTrends[metric] = trend
+			}
+		}
 
 		// Convert into a per-metric {trend, limit} structure
 		metricsData := make(map[string]interface{})
@@ -685,9 +1145,12 @@ func (s *Server) handleAllProvidersTrends(w nethttp.ResponseWriter, r *nethttp.R
 				trend = []map[string]interface{}{}
 			}
 			availableMetrics = append(availableMetrics, item.Metric)
+			metricCycle := domain.ResolveMetricCycleType(p.Name, item.Metric, cycleConfig.CycleType)
 			metricsData[item.Metric] = map[string]interface{}{
-				"trend": trend,
-				"limit": metricLimits[item.Metric],
+				"trend":       trend,
+				"limit":       metricLimits[item.Metric],
+				"cycle_type":  string(metricCycle),
+				"cycle_label": domain.CycleLabel(metricCycle),
 			}
 		}
 

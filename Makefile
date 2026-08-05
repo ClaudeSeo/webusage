@@ -1,4 +1,4 @@
-.PHONY: build test test-race run dev clean deps fmt lint coverage build-prod
+.PHONY: build test test-race test-browser run dev clean deps fmt lint coverage build-prod
 
 # Build binary
 build:
@@ -7,6 +7,10 @@ build:
 # Run all tests
 test:
 	mise exec -- go test ./... -v
+
+# Run the opt-in real-Chrome dashboard acceptance suite
+test-browser:
+	mise exec -- go test -tags browser ./internal/http -run '^TestDashboardBrowserAcceptance$$' -count=1 -v
 
 # Run tests with race detector
 test-race:

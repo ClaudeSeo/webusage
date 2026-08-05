@@ -98,6 +98,7 @@ func main() {
 		os.Exit(1)
 	}
 	httpServer.SetTitle(cfg.Title)
+	httpServer.SetCollectionInterval(cfg.CollectionInterval)
 
 	// Create collector with OpenUsage client (may be nil) and native providers
 	coll := collector.NewCollector(s, client, cfg.CollectionInterval, logger)

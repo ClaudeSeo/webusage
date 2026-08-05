@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/ClaudeSeo/webusage/internal/collector"
@@ -20,16 +21,69 @@ import (
 
 // Server manages the HTTP server
 type Server struct {
-	store       *store.Store
-	collector   *collector.Collector
-	openusage   *openusage.Client
-	host        string
-	port        int
-	logger      *slog.Logger
-	mux         *nethttp.ServeMux
-	tmpl        *template.Template
-	templateDir string
-	title       string
+	store              *store.Store
+	collector          *collector.Collector
+	openusage          *openusage.Client
+	host               string
+	port               int
+	logger             *slog.Logger
+	mux                *nethttp.ServeMux
+	tmpl               *template.Template
+	templateDir        string
+	title              string
+	collectionInterval time.Duration
+	collectionMu       sync.RWMutex
+	collectionRuns     map[string]*collectionRun
+	nextCollectionID   uint64
+	latestCollectionID string
+}
+
+// collectionRun records the lifecycle of one asynchronous manual collection.
+// Raw collector errors are intentionally not retained because this state is
+// exposed through an HTTP status resource.
+type collectionRun struct {
+	ID              string
+	Status          string
+	Terminal        bool
+	StartedAt       time.Time
+	CompletedAt     time.Time
+	CollectionError *string
+}
+
+// SSRMetricView is the server-side summary consumed by the dashboard's first
+// paint. It embeds the legacy metric fields and adds the deterministic G1
+// projection values so a client render can hydrate without fixture data.
+type SSRMetricView struct {
+	domain.MetricView
+	Metric                 string                `json:"metric"`
+	CycleType              string                `json:"cycle_type"`
+	CycleLabel             string                `json:"cycle_label"`
+	CurrentPercent         float64               `json:"current_percent"`
+	PacePerHour            float64               `json:"pace_per_hour"`
+	ProjectedUsage         float64               `json:"projected_usage"`
+	ProjectedPercent       float64               `json:"projected_percent"`
+	HasProjection          bool                  `json:"has_projection"`
+	HasForecast            bool                  `json:"has_forecast"`
+	ForecastUsable         bool                  `json:"forecast_usable"`
+	WeakEstimate           bool                  `json:"weak_estimate"`
+	Severity               domain.MetricSeverity `json:"severity"`
+	TimeRemaining          string                `json:"time_remaining,omitempty"`
+	ObservationWindowHours float64               `json:"observation_window_hours,omitempty"`
+}
+
+// SSRProviderView keeps ProviderView's public fields while exposing metric
+// projections as a separate collection. Existing templates can continue using
+// Name/Enabled/LastError/etc. through the embedded legacy view.
+type SSRProviderView struct {
+	domain.ProviderView
+	Metrics []SSRMetricView `json:"metrics"`
+	// DisplayCycleType is the cycle shown in the provider card description. The
+	// provider-wide configuration can name a headline metric the provider no
+	// longer reports, so the first rendered metric's cycle is preferred and the
+	// configured cycle is only a fallback for providers without metrics.
+	DisplayCycleType  string                            `json:"display_cycle_type,omitempty"`
+	PrimaryMetric     string                            `json:"primary_metric,omitempty"`
+	MetricProjections map[string]map[string]interface{} `json:"metric_projections,omitempty"`
 }
 
 // NewServer creates a new HTTP server. templateDir is optional — defaults to "templates" when empty
@@ -40,12 +94,14 @@ func NewServer(s *store.Store, host string, port int, logger *slog.Logger, templ
 	}
 
 	server := &Server{
-		store:       s,
-		host:        host,
-		port:        port,
-		logger:      logger,
-		mux:         nethttp.NewServeMux(),
-		templateDir: tdir,
+		store:              s,
+		host:               host,
+		port:               port,
+		logger:             logger,
+		mux:                nethttp.NewServeMux(),
+		templateDir:        tdir,
+		collectionInterval: 15 * time.Minute,
+		collectionRuns:     make(map[string]*collectionRun),
 	}
 
 	if err := server.loadTemplates(); err != nil {
@@ -179,6 +235,31 @@ func (s *Server) loadTemplates() error {
 			}
 			return result
 		},
+		// hatchTone selects the projection hatch colour token for a severity so
+		// the projected-overshoot band reads in the same tone as its gauge fill.
+		"hatchTone": func(severity domain.MetricSeverity) string {
+			switch severity {
+			case domain.MetricSeverityDanger:
+				return "var(--danger)"
+			case domain.MetricSeverityWarn:
+				return "var(--warn)"
+			default:
+				return "var(--fg)"
+			}
+		},
+		// cycleShort is the compact cycle label used inside provider card metric
+		// rows, where the full label would dominate the metric name.
+		"cycleShort": func(cycleType string) string {
+			return domain.CycleShortLabel(domain.CycleType(cycleType))
+		},
+		// cycleLabel and limitLabel keep provider-level cycle and limit copy in
+		// Korean, matching the metric badges rendered below them.
+		"cycleLabel": func(cycleType string) string {
+			return domain.CycleLabel(domain.CycleType(cycleType))
+		},
+		"limitLabel": func(limitType string) string {
+			return domain.LimitTypeLabel(domain.LimitType(limitType))
+		},
 	}
 
 	allContent := string(layout) + string(dashboard) +
@@ -207,14 +288,14 @@ func (s *Server) handleDashboard(w nethttp.ResponseWriter, r *nethttp.Request) {
 		return
 	}
 
-	var views []domain.ProviderView
+	var legacyViews []domain.ProviderView
 	for _, p := range providers {
 		view := domain.ProviderView{
 			ID:        p.ID,
 			Name:      p.Name,
 			Enabled:   p.Enabled,
 			UpdatedAt: p.UpdatedAt,
-			LastError: p.LastError,
+			LastError: safeCollectionError(p.LastError),
 		}
 
 		cycleConfig := domain.GetProviderCycleConfig(p.Name)
@@ -284,15 +365,22 @@ func (s *Server) handleDashboard(w nethttp.ResponseWriter, r *nethttp.Request) {
 			}
 		}
 
-		views = append(views, view)
+		legacyViews = append(legacyViews, view)
+	}
+
+	views := make([]SSRProviderView, 0, len(legacyViews))
+	for _, legacy := range legacyViews {
+		ssr := s.buildSSRProviderView(legacy, time.Now().UTC())
+		views = append(views, ssr)
 	}
 
 	data := map[string]interface{}{
-		"Providers": views,
-		"Year":      time.Now().Year(),
-		"Interval":  5,
-		"Range":     "5h",
-		"TrendData": nil,
+		"Providers":                 views,
+		"Year":                      time.Now().Year(),
+		"Interval":                  int(s.currentCollectionInterval() / time.Minute),
+		"CollectionIntervalSeconds": int64(s.currentCollectionInterval() / time.Second),
+		"Range":                     "5h",
+		"TrendData":                 nil,
 	}
 
 	if s.title != "" {
@@ -305,6 +393,53 @@ func (s *Server) handleDashboard(w nethttp.ResponseWriter, r *nethttp.Request) {
 	if err := s.tmpl.ExecuteTemplate(w, "layout", data); err != nil {
 		s.logger.Error("Template execution failed", "error", err)
 	}
+}
+
+// buildSSRProviderView returns the projection-rich provider summary used by
+// handleDashboard and direct SSR assertions. It deliberately keeps all
+// transport-sensitive fields out of the view model.
+func (s *Server) buildSSRProviderView(legacy domain.ProviderView, now time.Time) SSRProviderView {
+	ssr := SSRProviderView{ProviderView: legacy, DisplayCycleType: legacy.CycleType, MetricProjections: map[string]map[string]interface{}{}}
+	provider, err := s.store.GetProvider(legacy.ID)
+	if err != nil {
+		return ssr
+	}
+	sets, err := loadMetricSnapshotSets(s.store, provider, now)
+	if err != nil {
+		return ssr
+	}
+	if primary := primaryMetricSet(provider, sets); primary != nil {
+		ssr.PrimaryMetric = primary.Metric
+	}
+	for _, set := range sets {
+		limit := 0.0
+		if set.Latest != nil && set.Latest.Limit != nil {
+			limit = *set.Latest.Limit
+		}
+		resetAt := time.Time{}
+		if set.Latest != nil && set.Latest.ResetAt != nil {
+			resetAt = *set.Latest.ResetAt
+		}
+		projection := set.Projection
+		ssr.Metrics = append(ssr.Metrics, SSRMetricView{
+			MetricView: domain.MetricView{
+				Name: set.Metric, Label: domain.MetricLabel(set.Metric), Used: projection.CurrentUsage,
+				Limit: limit, Percent: projection.CurrentPercent, ResetAt: resetAt,
+			},
+			Metric: set.Metric, CycleType: string(projection.CycleType), CycleLabel: projection.CycleLabel,
+			CurrentPercent: projection.CurrentPercent, PacePerHour: projection.PacePerHour,
+			ProjectedUsage: projection.ProjectedUsage, ProjectedPercent: projection.ProjectedPercent,
+			HasProjection: projection.HasProjection, HasForecast: projection.HasForecast,
+			ForecastUsable: projection.ForecastUsable, WeakEstimate: projection.WeakEstimate,
+			Severity: projection.Severity, TimeRemaining: projection.TimeRemainingText,
+			ObservationWindowHours: projection.ObservationWindowHours,
+		})
+		ssr.MetricProjections[set.Metric] = metricProjectionJSON(set)
+	}
+	if len(ssr.Metrics) > 0 {
+		ssr.DisplayCycleType = ssr.Metrics[0].CycleType
+	}
+	return ssr
 }
 
 // handleProviderAction handles /api/providers/{name}/enable and /api/providers/{name}/disable
@@ -372,6 +507,80 @@ func (s *Server) handleDisableProvider(w nethttp.ResponseWriter, r *nethttp.Requ
 	})
 }
 
+func (s *Server) beginCollectionRun() *collectionRun {
+	s.collectionMu.Lock()
+	defer s.collectionMu.Unlock()
+	s.nextCollectionID++
+	id := fmt.Sprintf("collection-%d", s.nextCollectionID)
+	run := &collectionRun{
+		ID:        id,
+		Status:    "collecting",
+		StartedAt: time.Now().UTC(),
+	}
+	if s.collectionRuns == nil {
+		s.collectionRuns = make(map[string]*collectionRun)
+	}
+	s.collectionRuns[id] = run
+	s.latestCollectionID = id
+	return run
+}
+
+func (s *Server) finishCollectionRun(id string, err error) {
+	s.collectionMu.Lock()
+	defer s.collectionMu.Unlock()
+	run, ok := s.collectionRuns[id]
+	if !ok {
+		return
+	}
+	run.Terminal = true
+	run.CompletedAt = time.Now().UTC()
+	if err != nil {
+		run.Status = "failed"
+		message := "collection failed"
+		run.CollectionError = &message
+		return
+	}
+	run.Status = "completed"
+}
+
+func (s *Server) collectionRunSnapshot(id string) (collectionRun, bool) {
+	s.collectionMu.RLock()
+	defer s.collectionMu.RUnlock()
+	if id == "" {
+		id = s.latestCollectionID
+	}
+	run, ok := s.collectionRuns[id]
+	if !ok || run == nil {
+		return collectionRun{}, false
+	}
+	snapshot := *run
+	if run.CollectionError != nil {
+		message := *run.CollectionError
+		snapshot.CollectionError = &message
+	}
+	return snapshot, true
+}
+
+func collectionRunResponse(run collectionRun) map[string]interface{} {
+	response := map[string]interface{}{
+		"collection_id": run.ID,
+		"status":        run.Status,
+		"terminal":      run.Terminal,
+		"done":          run.Terminal,
+		"success":       run.Terminal && run.Status == "completed",
+		"started_at":    run.StartedAt,
+	}
+	if !run.CompletedAt.IsZero() {
+		response["completed_at"] = run.CompletedAt
+	}
+	if run.CollectionError != nil {
+		response["collection_error"] = *run.CollectionError
+		// Preserve the generic legacy error key for clients that already render it.
+		response["error"] = *run.CollectionError
+	}
+	return response
+}
+
 // handleCollect triggers immediate collection from OpenUsage
 func (s *Server) handleCollect(w nethttp.ResponseWriter, r *nethttp.Request) {
 	if r.Method != nethttp.MethodPost {
@@ -384,16 +593,43 @@ func (s *Server) handleCollect(w nethttp.ResponseWriter, r *nethttp.Request) {
 		return
 	}
 
-	go func() {
-		if err := s.collector.CollectAll(context.Background()); err != nil {
+	run := s.beginCollectionRun()
+	go func(collectionID string) {
+		err := s.collector.CollectAll(context.Background())
+		if err != nil {
 			s.logger.Error("Manual collection failed", "error", err)
 		}
-	}()
+		s.finishCollectionRun(collectionID, err)
+	}(run.ID)
 
 	s.jsonResponse(w, map[string]interface{}{
-		"status":  "collecting",
-		"message": "Collection triggered from OpenUsage API",
+		"status":        "collecting",
+		"message":       "Collection triggered from OpenUsage API",
+		"collection_id": run.ID,
+		"status_url":    "/api/collect/status?collection_id=" + run.ID,
 	})
+}
+
+// handleCollectionStatus reports the terminal state of an asynchronous manual collection.
+// The query form is canonical; /api/collect/status/{id} is retained as a path alias.
+func (s *Server) handleCollectionStatus(w nethttp.ResponseWriter, r *nethttp.Request) {
+	if r.Method != nethttp.MethodGet {
+		nethttp.Error(w, "Method not allowed", nethttp.StatusMethodNotAllowed)
+		return
+	}
+	id := r.URL.Query().Get("collection_id")
+	if id == "" {
+		id = strings.TrimPrefix(r.URL.Path, "/api/collect/status/")
+		if id == r.URL.Path {
+			id = ""
+		}
+	}
+	run, ok := s.collectionRunSnapshot(id)
+	if !ok {
+		s.jsonError(w, "Collection not found", nethttp.StatusNotFound)
+		return
+	}
+	s.jsonResponse(w, collectionRunResponse(run))
 }
 
 // handleHealthz is the health check endpoint
@@ -448,7 +684,10 @@ func (s *Server) setupRoutes() {
 	s.mux.HandleFunc("/api/providers/", s.handleProviderAction)
 	s.mux.HandleFunc("/api/metric-preferences", s.handleMetricPreferences)
 	s.mux.HandleFunc("/api/heatmap", s.handleAPIHeatmap)
+	s.mux.HandleFunc("/api/activity", s.handleAPIActivity)
 	s.mux.HandleFunc("/api/collect", s.handleCollect)
+	s.mux.HandleFunc("/api/collect/status", s.handleCollectionStatus)
+	s.mux.HandleFunc("/api/collect/status/", s.handleCollectionStatus)
 	s.mux.HandleFunc("/healthz", s.handleHealthz)
 }
 

@@ -1,247 +1,863 @@
 {{define "content"}}
-{{/*
-    Dashboard Template
-    Expected data structure:
-    .Providers: []Provider
-        - ID, Name, Used, Limit, Remaining, ResetAt, CollectedAt, LastError, UpdatedAt
-    .HealthStatus: "ok" | "degraded" | "error"
-    .TrendData: TrendResponse (optional)
-    .Range: "5h" | "24h" | "7d" | "30d" (default: "5h")
-    .HasError: bool
-    .ErrorMessage: string
-    .RiskSummary: {CriticalCount, WarningCount, StaleCount, OkCount}
-*/}}
-
-{{if .HasError}}
-    {{template "errorState" dict 
-        "Type" "api-error"
-        "Title" "대시보드 데이터를 불러올 수 없습니다"
-        "Message" "서버 연결에 문제가 발생했습니다. 잠시 후 다시 시도해주세요."
-        "ShowRetry" true
-        "ErrorDetail" .ErrorMessage
-    }}
-{{else if not .Providers}}
-    {{template "errorState" dict 
-        "Type" "no-data"
-        "Title" "데이터가 없습니다"
-        "Message" "아직 수집된 사용량 데이터가 없습니다. 백엔드 서비스가 정상적으로 실행 중인지 확인하세요."
-        "ShowRetry" true
-    }}
-{{else}}
-    {{/* Provider Cards Grid - only enabled providers */}}
-    <div class="dashboard-grid">
+{{/* The server supplies the first paint; subsequent renders use the public JSON APIs. */}}
+<main class="view" id="view-overview" data-view-panel="overview">
+    <div class="sec-head"><div><div class="sec-title">프로바이더 사용량</div><div class="sec-desc">지표별 게이지 · 빗금은 현재 페이스로 리셋 시점에 도달할 추정 구간</div></div><div class="right" id="overviewLegend"><span class="overview-legend"><span class="legend-hatch" style="background:repeating-linear-gradient(115deg, color-mix(in oklab, var(--fg) 30%, transparent) 0 3px, transparent 3px 7px)"></span>추정 도달 <span class="legend-hatch" style="background:color-mix(in oklab, var(--fg) 82%, transparent);margin-left:var(--space-3)"></span> <span id="overviewLegendCurrent">현재 사용량</span> <span style="display:inline-block;width:2px;height:11px;background:color-mix(in oklab, var(--fg) 34%, transparent);margin-left:var(--space-3)"></span> 한도 90% 선</span><span data-slot="badge" class="badge badge-outline" id="overviewStatus" hidden>SSR 데이터</span></div></div>
+    <div class="card-grid" id="cardGrid">
         {{range .Providers}}
-            {{if .Enabled}}
-                {{if .LastError}}
-                    {{template "providerCard" dict
-                        "ID" .ID
-                        "Name" .Name
-                        "Enabled" .Enabled
-                        "Metrics" .Metrics
-                        "CollectedAt" .CollectedAt
-                        "UpdatedAt" .UpdatedAt
-                        "LastError" .LastError
-                    }}
-                {{else}}
-                    {{template "providerCard" dict
-                        "ID" .ID
-                        "Name" .Name
-                        "Enabled" .Enabled
-                        "Metrics" .Metrics
-                        "CollectedAt" .CollectedAt
-                        "UpdatedAt" .UpdatedAt
-                        "LastError" ""
-                    }}
-                {{end}}
-            {{end}}
-        {{end}}
+            <article class="provider-card interactive" data-slot="card" data-provider-id="{{.Name}}" data-provider-name="{{.Name}}" data-cycle-type="{{.CycleType}}" data-last-error="{{if .LastError}}true{{else}}false{{end}}"{{if not .Enabled}} hidden{{end}}>
+                <div data-slot="card-header"><div style="min-width:0"><h3 data-slot="card-title" class="card-title">{{.Name}}</h3>{{/* The design source shows "auth · N metrics" here; cycle and limit type are kept deliberately because they describe what the gauges below actually measure. */}}<p data-slot="card-description" class="card-description">{{cycleLabel .DisplayCycleType}} · {{limitLabel .LimitType}}</p></div>
+                    <span style="margin-left:auto">{{if .LastError}}<span data-slot="badge" class="badge badge-danger provider-status"><span class="dot" style="background:var(--danger)"></span>수집 실패</span>{{else if isStale .CollectedAt}}<span data-slot="badge" class="badge badge-warn provider-status"><span class="dot" style="background:var(--warn)"></span>데이터 오래됨</span>{{else}}<span data-slot="badge" class="badge badge-ok provider-status">정상</span>{{end}}</span>
+                </div>
+                <div class="metrics" data-slot="card-content" data-provider-metrics>
+                    {{range .Metrics}}
+                    <div class="metric metric-section" data-label="{{.Label}}" data-metric="{{.Name}}" data-used="{{.Used}}" data-limit="{{.Limit}}" data-percent="{{.Percent}}" data-cycle="{{.CycleType}}" data-pace="{{.PacePerHour}}" data-projected-usage="{{.ProjectedUsage}}" data-projected-percent="{{.ProjectedPercent}}" data-has-projection="{{.HasProjection}}" data-has-forecast="{{.HasForecast}}" data-forecast-usable="{{.ForecastUsable}}" data-weak-estimate="{{.WeakEstimate}}" data-severity="{{.Severity}}" data-observation-window="{{.ObservationWindowHours}}">
+                        <div class="metric-top"><span class="metric-name">{{.Label}}</span><span data-slot="badge" class="badge badge-secondary metric-cycle">{{cycleShort .CycleType}}</span><span class="metric-val metric-display"><span class="num">{{formatNumber .Used}}</span>{{if gt .Limit 0.0}} <span class="of">/ <span class="num">{{formatNumber .Limit}}</span></span>{{end}}</span></div>
+                        {{if gt .Limit 0.0}}<div data-slot="gauge" class="metric-gauge"><span class="gauge-projection gauge-proj" aria-hidden="true" style="width:{{if and .HasForecast .ForecastUsable}}{{if gt .ProjectedPercent 100.0}}100{{else}}{{.ProjectedPercent}}{{end}}{{else}}0{{end}}%;background:repeating-linear-gradient(115deg, color-mix(in oklab, {{hatchTone .Severity}} 30%, transparent) 0 3px, transparent 3px 7px)"></span><span class="gauge-fill metric-progress" style="width: {{if gt .Percent 100.0}}100{{else}}{{.Percent}}{{end}}%"></span><span class="gauge-tick" style="left: 90%" aria-hidden="true"></span></div>{{end}}
+                        <div class="metric-foot"><span class="metric-percent">{{if gt .Limit 0.0}}{{printf "%.1f" .Percent}}% 사용{{else}}—{{end}}</span><span class="metric-pace">{{if gt .PacePerHour 0.0}}페이스 {{formatNumber .PacePerHour}}/시간{{end}}</span><span class="metric-projection right {{if and (gt .Limit 0.0) .HasProjection (not .WeakEstimate)}}{{if ge .ProjectedPercent 100.0}}over{{else if ge .ProjectedPercent 80.0}}near{{end}}{{end}}">{{if gt .Limit 0.0}}{{if .WeakEstimate}}표본 부족{{else if .HasProjection}}리셋 시점 추정 {{printf "%.1f" .ProjectedPercent}}%{{else}}페이스 계산 불가{{end}}{{else}}—{{end}}</span></div>
+                        {{if not .ResetAt.IsZero}}<div class="metric-foot"><span>리셋 <span class="num">{{formatDateTime .ResetAt}}</span></span><span class="right num">{{if .TimeRemaining}}{{.TimeRemaining}}{{end}}</span></div>{{end}}
+                    </div>
+                    {{else}}<div data-slot="alert" style="padding:var(--space-3) var(--space-4)"><div><div class="at">표시할 지표가 없습니다</div>설정 &gt; 표시 지표에서 다시 켤 수 있습니다.</div></div>{{end}}
+                </div>
+                {{if .LastError}}<div class="provider-error" role="alert">수집에 실패했습니다. 마지막 정상 스냅샷을 표시합니다.</div>{{end}}
+                <div data-slot="card-footer"><span>마지막 수집 <span class="num collected-at" data-collected-at="{{.CollectedAt.Format "2006-01-02T15:04:05Z07:00"}}">{{formatDateTime .CollectedAt}}</span></span><span style="margin-left:auto" class="num">{{.Name}}</span></div>
+            </article>
+        {{else}}<div data-slot="card" data-provider-empty-state style="grid-column:1/-1"><div data-slot="card-content"><div data-slot="alert"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><use href="#i-alert"/></svg><div><div class="at">표시할 프로바이더가 없습니다</div>설정에서 프로바이더를 하나 이상 활성화하세요.</div></div></div></div>{{end}}
     </div>
-    
-    {{/* Trend Chart */}}
-    {{template "trendChart" dict
-        "Range" .Range
-        "Providers" .Providers
-        "TrendData" .TrendData
-    }}
+</main>
 
-    {{/* Heatmap */}}
-    {{template "heatmap" dict
-        "Range" .Range
-        "Providers" .Providers
-    }}
-{{end}}
+<main class="view" id="view-providers" data-view-panel="providers" hidden>
+    <div class="sec-head"><div><div class="sec-title">지표 테이블</div><div class="sec-desc">활성 프로바이더의 모든 지표 · 열 제목을 눌러 정렬</div></div><div class="right"><span data-slot="badge" class="badge badge-outline" id="tableCount">—</span></div></div>
+    <div data-slot="card"><div class="table-wrap"><table data-slot="table" id="metricTable"><thead><tr>
+        <th>프로바이더</th><th>지표</th><th>주기</th><th id="metricValueHeader" class="sortable cell-right" data-sort="used" data-gauge-label="usage" data-remaining-label="남음" aria-sort="none">사용</th><th id="metricPercentHeader" class="sortable" data-sort="pct" data-gauge-label="usage" data-remaining-label="남은 비율" aria-sort="none">사용률</th><th class="sortable cell-right" data-sort="pace" aria-sort="none">페이스<span class="sr-only">(시간당 추정)</span></th><th class="sortable cell-right" data-sort="reset" aria-sort="none">리셋까지</th><th class="sortable" data-sort="projection" aria-sort="none">추정 도달</th>
+    </tr></thead><tbody id="metricTableBody">
+        {{range .Providers}}{{ $provider := . }}{{range .Metrics}}<tr data-provider="{{$provider.Name}}" data-metric="{{.Name}}" data-used="{{.Used}}" data-limit="{{.Limit}}" data-pct="{{.Percent}}" data-pace="{{.PacePerHour}}" data-projection="{{.ProjectedPercent}}" data-reset="{{if not .ResetAt.IsZero}}{{.ResetAt.Unix}}{{else}}0{{end}}" data-label="{{.Label}}" data-weak-estimate="{{.WeakEstimate}}" data-severity="{{.Severity}}"{{if not $provider.Enabled}} hidden{{end}}><td class="cell-strong">{{$provider.Name}}</td><td class="num table-metric">{{.Label}}</td><td><span data-slot="badge" class="badge badge-outline">{{if .CycleLabel}}{{.CycleLabel}}{{else}}{{.CycleType}}{{end}}</span></td><td class="cell-right num"><span class="table-used">{{formatNumber .Used}}</span>{{if gt .Limit 0.0}}<span class="table-limit"> / {{formatNumber .Limit}}</span>{{end}}</td><td><div class="table-percent-cell"><span class="num table-percent table-percent-value" aria-label="{{if gt .Limit 0.0}}{{printf "%.1f" .Percent}}% 사용{{else}}—{{end}}">{{if gt .Limit 0.0}}{{printf "%.1f" .Percent}}%{{else}}—{{end}}</span>{{if gt .Limit 0.0}}<div class="mini-gauge"><div data-slot="gauge"><span class="table-gauge-proj gauge-proj" style="width:{{if and .HasForecast .ForecastUsable}}{{if gt .ProjectedPercent 100.0}}100{{else}}{{.ProjectedPercent}}{{end}}{{else}}0{{end}}%;background:repeating-linear-gradient(115deg, color-mix(in oklab, {{hatchTone .Severity}} 30%, transparent) 0 3px, transparent 3px 7px)"></span><span class="table-gauge-fill gauge-fill" style="width:{{if gt .Percent 100.0}}100{{else}}{{.Percent}}{{end}}%"></span><span class="gauge-tick" style="left:90%"></span></div></div>{{end}}</div></td><td class="cell-right num table-pace" style="white-space:nowrap">{{if gt .PacePerHour 0.0}}{{formatNumber .PacePerHour}}{{else}}—{{end}}</td><td class="cell-right num">{{if .TimeRemaining}}{{.TimeRemaining}}{{else}}—{{end}}</td><td>{{if and (gt .Limit 0.0) .WeakEstimate}}<span data-slot="badge" class="badge badge-outline table-projection" title="관측 구간이 짧아 근거가 약한 추정">표본 부족</span>{{else if and (gt .Limit 0.0) .HasProjection}}<span data-slot="badge" class="badge table-projection {{if eq .Severity "danger"}}badge-danger{{else if eq .Severity "warn"}}badge-warn{{else}}badge-secondary{{end}}">{{printf "%.1f" .ProjectedPercent}}%</span>{{else}}<span class="table-projection" style="color:var(--muted)">—</span>{{end}}</td></tr>{{end}}{{end}}
+    </tbody></table></div><div data-slot="card-footer">페이스와 추정 도달은 같은 주기 안의 최근 두 스냅샷 차이로 계산합니다. 관측 구간의 6배를 넘는 기간까지 외삽해야 하는 지표는 <strong style="color:var(--fg);font-weight:500">표본 부족</strong>으로 표시하고 상태 판정에서 제외합니다.</div></div>
+</main>
+
+<main class="view" id="view-trends" data-view-panel="trends" hidden>
+    <div class="sec-head"><div><div class="sec-title">사용률 추이</div><div class="sec-desc">모든 지표를 한도 대비 %로 정규화해 비교합니다</div></div><div class="right"><div data-slot="toggle-group" id="modeGroup" role="group" aria-label="차트 표시 방식"><button data-mode="cumulative" data-slot="toggle-group-item" aria-pressed="true">누적</button><button data-mode="delta" data-slot="toggle-group-item" aria-pressed="false">증감</button></div><div data-slot="tabs-list" id="rangeTabs" role="tablist" aria-label="기간"><button data-range="5h" data-slot="tabs-trigger" role="tab" aria-selected="false">5시간</button><button data-range="24h" data-slot="tabs-trigger" role="tab" aria-selected="false">24시간</button><button data-range="7d" data-slot="tabs-trigger" role="tab" aria-selected="true">7일</button><button data-range="30d" data-slot="tabs-trigger" role="tab" aria-selected="false">30일</button></div></div></div>
+    <div data-slot="card"><div data-slot="card-header" style="align-items:center"><div style="min-width:0"><h3 class="card-title" id="chartTitle">—</h3><p class="card-description" id="chartDesc">—</p></div><span data-slot="badge" class="badge badge-outline" id="trendDataStatus" data-api-state="idle" style="margin-left:auto;flex:0 0 auto" title="설정 시트에서 지표 순서를 바꾸면 대표 지표도 바뀝니다">설정의 지표 순서 기준</span></div><div data-slot="card-content"><div id="chipRow" style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:16px"></div><div id="trendMetricSelectors" class="metric-preference-list" style="margin-bottom:16px" hidden></div><div class="chart-shell" id="chartShell"><svg id="trendChart" class="chart-svg" role="img" aria-label="프로바이더별 사용률 추이"></svg><canvas id="trendChartCanvas" hidden aria-hidden="true"></canvas><div id="chartEmpty" class="chart-empty" hidden></div><div id="chartTip" data-slot="tooltip" class="chart-tooltip" role="status" aria-live="polite"></div></div></div><div data-slot="card-footer" id="chartFoot">—</div></div>
+</main>
+
+<main class="view" id="view-activity" data-view-panel="activity" hidden>
+    <div class="sec-head"><div><div class="sec-title">수집 커버리지</div><div class="sec-desc">스냅샷이 기록된 시각 · 빈 칸은 수집기가 돌지 않은 구간입니다</div></div><div class="right"><span data-slot="badge" class="badge badge-outline" id="hmTotal">—</span></div></div>
+    <div data-slot="card"><div data-slot="card-content"><div class="hm-scroll"><div class="hm-grid" id="heatmap" data-coverage="coverage"><div class="empty" style="grid-column:1 / -1">활동 데이터를 불러오는 중…</div></div></div><div class="hm-legend">
+        <span>적음</span>
+        <span class="hm-cell" data-lv="0"></span><span class="hm-cell" data-lv="1"></span>
+        <span class="hm-cell" data-lv="2"></span><span class="hm-cell" data-lv="3"></span><span class="hm-cell" data-lv="4"></span>
+        <span>많음</span>
+    </div></div><div data-slot="card-footer" id="hmFoot">/api/activity 응답의 14일 × 24시간 KST 커버리지입니다.</div></div><div id="activityAlert" role="status"></div>
+</main>
 
 <script>
-// Provider management UI
-async function loadProviderManagement() {
-    try {
-        const resp = await fetch('/api/providers');
-        if (!resp.ok) throw new Error('providers API 실패');
-        const data = await resp.json();
-        renderProviderManagement(data.providers || []);
-    } catch (e) {
-        document.getElementById('providerManagementCards').innerHTML =
-            '<div style="color: var(--accent-red); font-size: 0.875rem;">Provider 목록을 불러올 수 없습니다: ' + e.message + '</div>';
-    }
-}
+(function () {
+    'use strict';
 
-function renderProviderManagement(providers) {
-    const container = document.getElementById('providerManagementCards');
-    if (!providers.length) {
-        container.innerHTML = '<div style="color: var(--text-secondary); font-size: 0.875rem;">등록된 Provider가 없습니다.</div>';
-        return;
-    }
-    container.innerHTML = providers.map(p => providerManagementCard(p)).join('');
-}
+    const VIEWS = {
+        overview: { title: '개요', desc: '활성 프로바이더의 현재 사용량과 리셋 전 추정 도달' },
+        providers: { title: '프로바이더', desc: '지표 단위 상세 · 정렬과 비교' },
+        trends: { title: '트렌드', desc: '수집 스냅샷 기반 사용률 추이' },
+        activity: { title: '활동', desc: '수집기 실행 이력과 공백 구간' }
+    };
+    const SERIES_COLORS = ['#10a37f', '#0d0d0d', '#f5a623', '#ef4146', '#6956d8', '#3b82f6'];
+    const RANGE_WINDOW_MS = { '5h': 5 * 3600000, '24h': 24 * 3600000, '7d': 7 * 86400000, '30d': 30 * 86400000 };
+    const UI_STORAGE_KEY = 'webusage.ui.v1';
+    const state = {
+        view: 'overview',
+        gaugeMode: 'usage',
+        current: {},
+        providers: [],
+        trends: {},
+        range: '7d',
+        mode: 'cumulative',
+        chartHidden: [],
+        selectedMetrics: {},
+        chart: null,
+        heatmapRange: '14d'
+    };
+    let tableSort = { key: 'provider', dir: 1 };
 
-function providerManagementCard(p) {
-    const isEnabled = p.enabled;
-    const statusClass = isEnabled ? 'enabled' : 'disabled';
-    const badgeText = isEnabled ? '활성' : '비활성';
-    const btnClass = isEnabled ? 'disable' : 'enable';
-    const btnText = isEnabled ? '비활성화' : '활성화';
-    const btnAction = isEnabled ? 'disable' : 'enable';
-    const providerName = p.provider_id || p.name;
-
-    return `<div id="pm-card-${providerName}" class="provider-card${isEnabled ? '' : ' disabled'}">
-        <div class="provider-card-header">
-            <span class="provider-card-name">${p.display_name || providerName}</span>
-            <span class="provider-card-badge ${statusClass}">${badgeText}</span>
-        </div>
-        <div class="provider-card-method">${p.auth_method || ''}</div>
-        <button onclick="toggleProvider('${providerName}', '${btnAction}')"
-            class="provider-card-btn ${btnClass}"
-            id="pm-btn-${providerName}">
-            ${btnText}
-        </button>
-    </div>`;
-}
-
-async function toggleProvider(name, action) {
-    const btn = document.getElementById(`pm-btn-${name}`);
-    if (btn) { btn.disabled = true; btn.textContent = '처리 중...'; }
-    try {
-        const resp = await fetch(`/api/providers/${name}/${action}`, { method: 'POST' });
-        const data = await resp.json();
-        if (!resp.ok) {
-            alert(`${action === 'enable' ? '활성화' : '비활성화'} 실패: ${data.error}`);
-            return;
+    function getStorage() {
+        try {
+            const probe = '__webusage_storage_probe__';
+            window.localStorage.setItem(probe, '1');
+            window.localStorage.removeItem(probe);
+            return window.localStorage;
+        } catch (error) {
+            return null;
         }
-        // Refresh card state immediately
-        await loadProviderManagement();
-    } catch (e) {
-        alert('요청 실패: ' + e.message);
-        if (btn) { btn.disabled = false; }
     }
-}
 
-function calculateRiskSummary(providers) {
-    let criticalCount = 0;
-    let warningCount = 0;
-    let staleCount = 0;
-    let okCount = 0;
-
-    providers.forEach(provider => {
-        // multi-metric: judge by the highest utilization
-        const maxPercent = (provider.metrics || []).reduce((max, m) => {
-            const pct = m.limit > 0 ? (m.used / m.limit) * 100 : 0;
-            return Math.max(max, pct);
-        }, 0);
-        const isStale = !provider.collectedAt ||
-            (new Date() - new Date(provider.collectedAt)) > (2 * 60 * 60 * 1000);
-
-        if (provider.lastError) {
-            criticalCount++;
-        } else if (isStale) {
-            staleCount++;
-        } else if (maxPercent >= 80) {
-            warningCount++;
-        } else {
-            okCount++;
+    function readUIState() {
+        const storage = getStorage();
+        if (!storage) return {};
+        try {
+            const saved = JSON.parse(storage.getItem(UI_STORAGE_KEY) || '{}');
+            return saved && typeof saved === 'object' ? saved : {};
+        } catch (error) {
+            return {};
         }
-    });
-
-    return { criticalCount, warningCount, staleCount, okCount };
-}
-
-function updateRiskBanner(risk) {
-    document.getElementById('criticalCount').textContent = risk.criticalCount;
-    document.getElementById('warningCount').textContent = risk.warningCount;
-    document.getElementById('staleCount').textContent = risk.staleCount;
-    document.getElementById('okCount').textContent = risk.okCount;
-    
-    const assessmentEl = document.getElementById('riskAssessment');
-    let assessment;
-    
-    // Remove existing classes
-    assessmentEl.classList.remove('critical', 'warning', 'ok');
-    
-    if (risk.criticalCount > 0) {
-        assessment = '🔴 위험 - 즉시 조치 필요';
-        assessmentEl.classList.add('critical');
-    } else if (risk.staleCount > 0) {
-        assessment = '🟠 주의 - 데이터 오래됨';
-        assessmentEl.classList.add('warning');
-    } else if (risk.warningCount > 0) {
-        assessment = '🟡 관심 - 사용량 높음';
-        assessmentEl.classList.add('warning');
-    } else {
-        assessment = '🟢 정상 - 모든 Provider 안정적';
-        assessmentEl.classList.add('ok');
     }
-    
-    assessmentEl.textContent = assessment;
-}
 
-// Initial load of Provider management UI
-document.addEventListener('DOMContentLoaded', function() {
-    loadProviderManagement();
-});
+    function restoreUIState() {
+        const saved = readUIState();
+        if (['overview', 'providers', 'trends', 'activity'].includes(saved.view)) state.view = saved.view;
+        if (['5h', '24h', '7d', '30d'].includes(saved.range)) state.range = saved.range;
+        if (saved.mode === 'delta' || saved.mode === 'cumulative') state.mode = saved.mode;
+        if (saved.gaugeMode === 'remaining' || saved.gaugeMode === 'usage') state.gaugeMode = saved.gaugeMode;
+        if (Array.isArray(saved.chartHidden)) state.chartHidden = saved.chartHidden.filter(value => typeof value === 'string');
+        if (saved.selectedMetrics && typeof saved.selectedMetrics === 'object') state.selectedMetrics = saved.selectedMetrics;
+    }
 
-// Initial risk calculation from server data
-document.addEventListener('DOMContentLoaded', function() {
-    {{if .Providers}}
-        const initialData = {
-            providers: [
-                {{range $i, $p := .Providers}}
-                    {{if $i}},{{end}}
-                    {
-                        id: '{{$p.ID}}',
-                        name: '{{$p.Name}}',
-                        enabled: {{$p.Enabled}},
-                        metrics: [
-                            {{range $j, $m := $p.Metrics}}
-                                {{if $j}},{{end}}
-                                { used: {{$m.Used}}, limit: {{$m.Limit}}, percent: {{$m.Percent}} }
-                            {{end}}
-                        ],
-                        collectedAt: '{{if $p.CollectedAt}}{{formatDateTime $p.CollectedAt}}{{end}}',
-                        lastError: '{{if $p.LastError}}{{$p.LastError}}{{end}}',
-                        cycle_type: '{{$p.CycleType}}',
-                        limit_type: '{{$p.LimitType}}',
-                        cycle_start_at: '{{if not $p.CycleStartAt.IsZero}}{{formatDateTime $p.CycleStartAt}}{{end}}',
-                        cycle_end_at: '{{if not $p.CycleEndAt.IsZero}}{{formatDateTime $p.CycleEndAt}}{{end}}',
-                        time_remaining: '{{$p.TimeRemaining}}',
-                        will_exceed_before_reset: {{$p.WillExceedBeforeReset}},
-                        current_pace: {{$p.CurrentPace}},
-                        baseline_pace: {{$p.BaselinePace}},
-                        pace_ratio: {{$p.PaceRatio}}
-                    }
-                {{end}}
-            ]
+    function persistUIState() {
+        const storage = getStorage();
+        if (storage) {
+            try {
+                storage.setItem(UI_STORAGE_KEY, JSON.stringify({
+                    view: state.view,
+                    range: state.range,
+                    mode: state.mode,
+                    gaugeMode: state.gaugeMode,
+                    chartHidden: state.chartHidden,
+                    selectedMetrics: state.selectedMetrics
+                }));
+            } catch (error) { /* unavailable storage keeps a safe in-memory default */ }
+        }
+    }
+
+    function readGaugeMode() { restoreUIState(); return state.gaugeMode; }
+    function saveGaugeMode() { persistUIState(); }
+
+    function formatNumber(value) {
+        const number = Number(value);
+        if (!Number.isFinite(number)) return '—';
+        return new Intl.NumberFormat('ko-KR', { maximumFractionDigits: 1 }).format(number);
+    }
+
+    function formatDateTime(value) {
+        if (!value) return '—';
+        const date = new Date(value);
+        if (Number.isNaN(date.getTime())) return '—';
+        return date.toLocaleString('ko-KR', { timeZone: 'Asia/Seoul', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false });
+    }
+
+    function announce(message) {
+        const status = document.getElementById('metricPreferenceStatus');
+        if (status) status.textContent = message;
+    }
+
+    /* 추정 도달 빗금은 게이지 채움과 같은 심각도 톤을 쓴다. 톤을 고정하면 한도 임박
+       구간과 정상 구간의 빗금이 같아 보여 추정 위험도를 읽을 수 없다. */
+    function hatchGradient(severity) {
+        const tone = severity === 'danger' ? 'var(--danger)' : severity === 'warn' ? 'var(--warn)' : 'var(--fg)';
+        return `repeating-linear-gradient(115deg, color-mix(in oklab, ${tone} 30%, transparent) 0 3px, transparent 3px 7px)`;
+    }
+
+    function sanitizeError(error) {
+        const text = typeof error === 'string' ? error : '';
+        if (!text) return '알 수 없는 오류가 발생했습니다.';
+        if (/token|secret|password|credential|authorization|bearer|api[_ -]?key|https?:\/\//i.test(text)) return '외부 서비스 연결에 실패했습니다.';
+        return '수집에 실패했습니다. 잠시 후 다시 시도해 주세요.';
+    }
+
+    function showToast(title, description) {
+        const toast = document.createElement('div');
+        toast.dataset.slot = 'toast';
+        /* 토스트는 가로 flex이므로 제목과 설명을 한 번 감싸야 세로로 쌓인다. */
+        const copy = document.createElement('div');
+        const heading = document.createElement('div'); heading.className = 'tt'; heading.textContent = title;
+        copy.appendChild(heading);
+        if (description) { const detail = document.createElement('div'); detail.className = 'td'; detail.textContent = description; copy.appendChild(detail); }
+        toast.appendChild(copy);
+        document.getElementById('toaster').appendChild(toast);
+        /* 사라질 때도 등장 모션과 같은 곡선을 쓴다. 즉시 제거하면 토스트가 튀어 보인다. */
+        window.setTimeout(() => {
+            toast.classList.add('out');
+            window.setTimeout(() => toast.remove(), 220);
+        }, 4200);
+    }
+
+    function renderNavigation() {
+        document.querySelectorAll('#nav [data-view]').forEach(button => {
+            button.setAttribute('aria-current', button.dataset.view === state.view ? 'page' : 'false');
+        });
+        document.getElementById('providerNavCount').textContent = String(state.providers.filter(provider => provider.enabled).length);
+        const view = VIEWS[state.view] || VIEWS.overview;
+        document.getElementById('pageTitle').textContent = view.title;
+        document.getElementById('pageDesc').textContent = view.desc;
+        document.querySelectorAll('[data-view-panel]').forEach(panel => { panel.hidden = panel.dataset.viewPanel !== state.view; });
+        document.querySelectorAll('#rangeTabs [data-range]').forEach(button => button.setAttribute('aria-selected', String(button.dataset.range === state.range)));
+        document.querySelectorAll('#modeGroup [data-mode]').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.mode === state.mode)));
+    }
+
+    function applyGaugeMode() {
+        document.querySelectorAll('.metric-section').forEach(metric => {
+            const used = Number(metric.dataset.used);
+            const limit = Number(metric.dataset.limit);
+            const hasLimit = Number.isFinite(limit) && limit > 0;
+            const usagePercent = hasLimit ? Math.max(0, Math.min(100, (used / limit) * 100)) : 0;
+            const remaining = Number(metric.dataset.limit) - Number(metric.dataset.used);
+            const remainingPercent = 100 - Number(metric.dataset.percent);
+            const percent = state.gaugeMode === 'remaining' ? Math.max(0, Math.min(100, remainingPercent)) : usagePercent;
+            const projectedPercent = Number(metric.dataset.projectedPercent);
+            const gauge = metric.querySelector('[data-slot="gauge"]');
+            const fill = metric.querySelector('.metric-progress');
+            const projection = metric.querySelector('.gauge-proj');
+            const value = metric.querySelector('.metric-display');
+            const percentage = metric.querySelector('.metric-percent');
+            if (gauge) gauge.hidden = !hasLimit;
+            const metricRemainingWithoutLimit = state.gaugeMode === 'remaining' && !hasLimit;
+            if (value && !hasLimit) value.innerHTML = metricRemainingWithoutLimit ? '—' : `<span class="num">${formatNumber(used)}</span>`;
+            if (percentage && !hasLimit) {
+                percentage.textContent = '—';
+                percentage.setAttribute('aria-label', metricRemainingWithoutLimit ? '—' : `사용량 ${formatNumber(used)}`);
+            }
+            if (metricRemainingWithoutLimit) {
+                if (fill) {
+                    fill.style.width = '0%';
+                    fill.classList.remove('warn', 'danger');
+                }
+                if (projection) {
+                    projection.style.width = '0%';
+                    projection.hidden = true;
+                }
+                return;
+            }
+            if (!hasLimit) {
+                if (fill) {
+                    fill.style.width = '0%';
+                    fill.classList.remove('warn', 'danger');
+                }
+                if (projection) {
+                    projection.style.width = '0%';
+                    projection.hidden = true;
+                }
+                return;
+            }
+            if (projection) {
+                const projected = Number.isFinite(projectedPercent) && projectedPercent > 0 ? projectedPercent : 0;
+                projection.style.width = `${Math.max(0, Math.min(100, state.gaugeMode === 'remaining' ? 100 - projected : projected))}%`;
+                projection.style.background = hatchGradient(metric.dataset.severity);
+                projection.hidden = !Boolean(metric.dataset.forecastUsable === 'true' || metric.dataset.hasForecast === 'true');
+            }
+            if (fill) { fill.style.width = `${Math.max(0, Math.min(100, percent))}%`; fill.classList.toggle('warn', state.gaugeMode === 'usage' && usagePercent >= 80 || state.gaugeMode === 'remaining' && percent <= 20); fill.classList.toggle('danger', state.gaugeMode === 'usage' && usagePercent >= 95 || state.gaugeMode === 'remaining' && percent <= 5); }
+            if (value) value.innerHTML = `<span class="num">${formatNumber(state.gaugeMode === 'remaining' ? Math.max(0, remaining) : used)}</span> <span class="of">/ <span class="num">${formatNumber(limit)}</span></span>`;
+            if (percentage) percentage.textContent = `${percent.toFixed(1)}% ${state.gaugeMode === 'remaining' ? '남음' : '사용'}`;
+        });
+        document.querySelectorAll('#metricTableBody tr').forEach(row => {
+            const used = Number(row.dataset.used);
+            const limit = Number(row.dataset.limit);
+            const hasLimit = Number.isFinite(limit) && limit > 0;
+            const usagePercent = hasLimit ? Math.max(0, Math.min(100, (used / limit) * 100)) : 0;
+            const remaining = Number(row.dataset.limit) - Number(row.dataset.used);
+            const remainingPercent = 100 - Number(row.dataset.pct);
+            const percent = state.gaugeMode === 'remaining' ? Math.max(0, Math.min(100, remainingPercent)) : usagePercent;
+            const value = row.querySelector('.table-used');
+            const percentage = row.querySelector('.table-percent');
+            const gauge = row.querySelector('.mini-gauge');
+            const fill = row.querySelector('.table-gauge-fill');
+            const projection = row.querySelector('.table-gauge-proj');
+            row.dataset.gaugeMode = state.gaugeMode;
+            if (gauge) gauge.hidden = !hasLimit;
+            const remainingWithoutLimit = state.gaugeMode === 'remaining' && !hasLimit;
+            if (remainingWithoutLimit) {
+                if (value) value.textContent = '—';
+                if (percentage) { percentage.textContent = '—'; percentage.setAttribute('aria-label', '—'); }
+                if (fill) {
+                    fill.style.width = '0%';
+                    fill.classList.remove('warn', 'danger');
+                }
+                if (projection) {
+                    projection.style.width = '0%';
+                    projection.hidden = true;
+                }
+                return;
+            }
+            if (!hasLimit) {
+                if (value) value.textContent = formatNumber(used);
+                if (percentage) { percentage.textContent = '—'; percentage.setAttribute('aria-label', `사용량 ${formatNumber(used)}`); }
+                if (fill) {
+                    fill.style.width = '0%';
+                    fill.classList.remove('warn', 'danger');
+                }
+                if (projection) {
+                    projection.style.width = '0%';
+                    projection.hidden = true;
+                }
+                return;
+            }
+            if (projection) {
+                const projectedPercent = Number(row.dataset.projection);
+                const projected = Number.isFinite(projectedPercent) && projectedPercent > 0 ? projectedPercent : 0;
+                projection.style.width = `${Math.max(0, Math.min(100, state.gaugeMode === 'remaining' ? 100 - projected : projected))}%`;
+                projection.style.background = hatchGradient(row.dataset.severity);
+                projection.hidden = row.dataset.weakEstimate === 'true' || projected <= 0;
+            }
+            if (value) value.textContent = formatNumber(state.gaugeMode === 'remaining' ? Math.max(0, remaining) : used);
+            const limitLabel = row.querySelector('.table-limit');
+            if (limitLabel) limitLabel.textContent = ` / ${formatNumber(limit)}`;
+            /* 표의 사용률 칸은 숫자만 보여주고 기준(사용/남음)은 열 제목과 aria-label이 알린다. */
+            if (percentage) { percentage.textContent = `${percent.toFixed(1)}%`; percentage.setAttribute('aria-label', `${percent.toFixed(1)}% ${state.gaugeMode === 'remaining' ? '남음' : '사용'}`); }
+            if (fill) {
+                fill.style.width = `${Math.max(0, Math.min(100, percent))}%`;
+                fill.classList.toggle('warn', state.gaugeMode === 'usage' && usagePercent >= 80 || state.gaugeMode === 'remaining' && percent <= 20);
+                fill.classList.toggle('danger', state.gaugeMode === 'usage' && usagePercent >= 95 || state.gaugeMode === 'remaining' && percent <= 5);
+            }
+        });
+        const metricValueHeader = document.getElementById('metricValueHeader');
+        /* 정렬 화살표는 열 제목의 자식이므로, 라벨만 갈아끼우고 화살표는 되돌려 붙인다. */
+        const setSortableHeaderLabel = (header, label) => {
+            const arrow = header.querySelector('.arrow');
+            header.textContent = label;
+            if (arrow) header.appendChild(arrow);
         };
-        const risk = calculateRiskSummary(initialData.providers);
-        updateRiskBanner(risk);
-    {{end}}
-});
-
-// Helper function for Go templates
-function dict(values) {
-    const result = {};
-    for (const key in values) {
-        result[key] = values[key];
+        if (metricValueHeader) {
+            setSortableHeaderLabel(metricValueHeader, state.gaugeMode === 'remaining' ? metricValueHeader.dataset.remainingLabel : '사용');
+            metricValueHeader.dataset.gaugeMode = state.gaugeMode;
+        }
+        const metricPercentHeader = document.getElementById('metricPercentHeader');
+        if (metricPercentHeader) {
+            setSortableHeaderLabel(metricPercentHeader, state.gaugeMode === 'remaining' ? metricPercentHeader.dataset.remainingLabel : '사용률');
+            metricPercentHeader.dataset.gaugeMode = state.gaugeMode;
+        }
+        const switchElement = document.getElementById('gaugeModeSwitch');
+        if (switchElement) switchElement.setAttribute('aria-checked', String(state.gaugeMode === 'usage'));
+        const name = document.getElementById('gaugeModeName');
+        const description = document.getElementById('gaugeModeDesc');
+        if (name) name.textContent = state.gaugeMode === 'usage' ? '사용량 기준' : '남은량 기준';
+        if (description) description.textContent = state.gaugeMode === 'usage' ? '쓴 만큼 채워집니다' : '남은 만큼 채워집니다';
+        const legendCurrent = document.getElementById('overviewLegendCurrent');
+        if (legendCurrent) legendCurrent.textContent = state.gaugeMode === 'usage' ? '현재 사용량' : '현재 남은량';
     }
-    return result;
-}
+
+    function updateCurrentCards(data) {
+        state.current = data || {};
+        Object.entries(state.current).forEach(([providerName, current]) => {
+            const card = document.querySelector(`[data-provider-id="${CSS.escape(providerName)}"]`);
+            if (!card || !current) return;
+            card.dataset.currentUsage = String(current.current_usage ?? 0);
+            card.dataset.currentPercent = String(current.usage_percent ?? 0);
+            const status = card.querySelector('.provider-status');
+            if (status && (current.error || current.collection_error)) { status.className = 'badge badge-danger provider-status'; status.replaceChildren(); const dot = document.createElement('span'); dot.className = 'dot'; dot.style.background = 'var(--danger)'; status.append(dot, document.createTextNode('수집 실패')); status.title = sanitizeError(current.collection_error || current.error); }
+            const updated = card.querySelector('.collected-at');
+            if (updated && current.last_updated) { updated.textContent = formatDateTime(current.last_updated); updated.dataset.collectedAt = current.last_updated; }
+            Object.entries(current.metrics || {}).forEach(([metricName, projection]) => {
+                const metric = card.querySelector(`[data-metric="${CSS.escape(metricName)}"]`);
+                if (!metric || !projection) return;
+                const limit = Number(projection.limit_value ?? projection.limit ?? metric.dataset.limit);
+                const used = Number(projection.current_usage ?? projection.usage ?? metric.dataset.used);
+                metric.dataset.used = String(used); metric.dataset.limit = String(Number.isFinite(limit) ? limit : 0); metric.dataset.percent = String(Number(projection.current_percent ?? projection.usage_percent ?? metric.dataset.percent)); metric.dataset.projectedPercent = String(Number(projection.projected_percent || 0)); metric.dataset.forecastUsable = String(Boolean(projection.forecast_usable)); metric.dataset.hasForecast = String(Boolean(projection.has_forecast)); metric.dataset.weakEstimate = String(Boolean(projection.weak_estimate)); metric.dataset.severity = String(projection.severity || 'ok');
+                const value = metric.querySelector('.metric-display'); if (value) value.textContent = formatNumber(used);
+                const percent = metric.querySelector('.metric-percent'); if (percent && limit > 0) percent.textContent = `${Number(metric.dataset.percent).toFixed(1)}% 사용`;
+                const projectionLabel = metric.querySelector('.metric-projection');
+                if (projectionLabel) {
+                    projectionLabel.textContent = limit > 0 ? (projection.weak_estimate ? '표본 부족' : projection.has_projection ? `리셋 시점 추정 ${Number(projection.projected_percent || 0).toFixed(1)}%` : '페이스 계산 불가') : '—';
+                    /* 강조는 현재 사용량이 아니라 추정 도달치가 한도에 닿을 때만 준다. */
+                    const projectedPercent = Number(projection.projected_percent || 0);
+                    const emphasis = limit > 0 && projection.has_projection && !projection.weak_estimate
+                        ? (projectedPercent >= 100 ? ' over' : projectedPercent >= 80 ? ' near' : '')
+                        : '';
+                    projectionLabel.className = `metric-projection right${emphasis}`;
+                }
+            });
+        });
+        Object.entries(state.current).forEach(([providerName, current]) => Object.entries(current && current.metrics || {}).forEach(([metricName, projection]) => {
+            const row = document.querySelector(`#metricTableBody tr[data-provider="${CSS.escape(providerName)}"][data-metric="${CSS.escape(metricName)}"]`);
+            if (!row || !projection) return;
+            const currentUsage = projection.current_usage ?? projection.usage ?? row.dataset.used;
+            row.dataset.used = String(Number(currentUsage)); row.dataset.pct = String(Number(projection.current_percent ?? projection.usage_percent ?? row.dataset.pct)); row.dataset.projection = String(Number(projection.projected_percent || 0)); row.dataset.weakEstimate = String(Boolean(projection.weak_estimate));
+        }));
+        const latest = Object.values(state.current).map(value => value && value.last_updated).filter(Boolean).sort().pop();
+        if (latest) document.getElementById('snapshotLabel').textContent = `${formatDateTime(latest)} 스냅샷`;
+        applyGaugeMode();
+    }
+
+    async function loadCurrent() {
+        const response = await fetch('/api/current');
+        if (!response.ok) throw new Error(`current API ${response.status}`);
+        return response.json();
+    }
+
+    async function loadProviders() {
+        const response = await fetch('/api/providers');
+        if (!response.ok) throw new Error(`providers API ${response.status}`);
+        const payload = await response.json();
+        state.providers = Array.isArray(payload.providers) ? payload.providers : [];
+        document.getElementById('providerNavCount').textContent = String(state.providers.filter(provider => provider.enabled).length);
+        return state.providers;
+    }
+
+    async function loadDashboardData() {
+        try {
+            const [current, providers] = await Promise.all([loadCurrent(), loadProviders()]);
+            updateCurrentCards(current);
+            applyProviderVisibility();
+            document.getElementById('overviewStatus').textContent = 'API 연결됨';
+            renderProviderTable();
+            renderProviderFilters(state.trends);
+            if (state.view === 'trends') await loadTrendData(state.range);
+            updateHealthStatus();
+        } catch (error) {
+            document.getElementById('overviewStatus').textContent = 'API 연결 대기';
+            updateHealthStatus(sanitizeError(error && error.message));
+        }
+    }
+
+    function updateHealthStatus(failed) {
+        const dot = document.getElementById('healthDot');
+        const text = document.getElementById('healthText');
+        if (failed) { dot.style.background = 'var(--danger)'; text.textContent = 'API 연결 실패'; document.getElementById('healthNote').textContent = sanitizeError(failed === true ? '' : failed); return; }
+        const failedProviders = Array.from(document.querySelectorAll('.provider-status')).filter(node => node.classList.contains('badge-danger'));
+        const stale = Array.from(document.querySelectorAll('.provider-status')).some(node => node.classList.contains('badge-warn'));
+        dot.style.background = failedProviders.length ? 'var(--danger)' : stale ? 'var(--warn)' : 'var(--success)';
+        text.textContent = failedProviders.length ? '수집 실패 있음' : stale ? '데이터 오래됨' : '수집 정상';
+        document.getElementById('healthNote').textContent = failedProviders.length ? sanitizeError(failedProviders[0].title) : `활성 Provider ${state.providers.filter(provider => provider.enabled).length}개 · OpenUsage + native`;
+    }
+
+    function tableSortValue(row, key) {
+        if (key === 'used' || key === 'pct') {
+            const limit = Number(row.dataset.limit);
+            if (!Number.isFinite(limit) || limit <= 0) return null;
+            if (key === 'used') {
+                const used = Number(row.dataset.used);
+                if (!Number.isFinite(used)) return null;
+                return state.gaugeMode === 'remaining' ? limit - used : used;
+            }
+            const pct = Number(row.dataset.pct);
+            if (!Number.isFinite(pct)) return null;
+            return state.gaugeMode === 'remaining' ? 100 - pct : pct;
+        }
+        if (key === 'reset' || key === 'pace' || key === 'projection') return Number(row.dataset[key]);
+        return row.dataset[key] || row.dataset.provider || '';
+    }
+
+    function renderProviderTable() {
+        const body = document.getElementById('metricTableBody'); body.querySelector('[data-table-empty-state]')?.remove();
+        const rows = Array.from(body.querySelectorAll('tr[data-provider]')).filter(row => !row.hidden);
+        rows.sort((a, b) => {
+            const left = tableSortValue(a, tableSort.key);
+            const right = tableSortValue(b, tableSort.key);
+            const leftMissing = left === null || left === undefined || Number.isNaN(left);
+            const rightMissing = right === null || right === undefined || Number.isNaN(right);
+            if (leftMissing || rightMissing) {
+                if (leftMissing && rightMissing) return 0;
+                return leftMissing ? 1 : -1;
+            }
+            return (left > right ? 1 : left < right ? -1 : 0) * tableSort.dir;
+        });
+        rows.forEach(row => body.appendChild(row));
+        if (!rows.length) { const emptyRow = document.createElement('tr'); emptyRow.dataset.tableEmptyState = 'true'; const cell = document.createElement('td'); cell.colSpan = 8; cell.style.padding = 'var(--space-8)'; cell.style.textAlign = 'center'; cell.style.color = 'var(--muted)'; cell.textContent = '표시할 지표가 없습니다. 설정에서 프로바이더나 지표를 켜세요.'; emptyRow.appendChild(cell); body.appendChild(emptyRow); }
+        document.getElementById('tableCount').textContent = `${rows.length}개 지표 · ${state.providers.filter(provider => provider.enabled).length}개 프로바이더`;
+        document.querySelectorAll('#metricTable th.sortable').forEach(header => {
+            header.querySelector('.arrow')?.remove();
+            if (header.dataset.sort !== tableSort.key) {
+                header.setAttribute('aria-sort', 'none');
+                return;
+            }
+            header.setAttribute('aria-sort', tableSort.dir === 1 ? 'ascending' : 'descending');
+            const arrow = document.createElement('span');
+            arrow.className = 'arrow';
+            arrow.setAttribute('aria-hidden', 'true');
+            arrow.textContent = tableSort.dir === 1 ? '↑' : '↓';
+            header.appendChild(arrow);
+        });
+        applyGaugeMode();
+    }
+
+    function loadHeatmapData() {
+        return fetch('/api/activity').then(response => {
+            if (!response.ok) throw new Error(`activity API ${response.status}`);
+            return response.json();
+        }).then(renderHeatmap).catch(error => {
+            const target = document.getElementById('heatmap');
+            target.replaceChildren();
+            const empty = document.createElement('div'); empty.className = 'empty'; empty.style.gridColumn = '1 / -1'; empty.textContent = sanitizeError(error && error.message); target.appendChild(empty);
+        });
+    }
+
+    function renderHeatmap(data) {
+        const target = document.getElementById('heatmap');
+        target.replaceChildren();
+        const cells = Array.isArray(data && data.cells) ? data.cells : [];
+        if (!cells.length) { const empty = document.createElement('div'); empty.className = 'empty'; empty.style.gridColumn = '1 / -1'; empty.textContent = '표시할 활동 데이터가 없습니다.'; target.appendChild(empty); return; }
+        const byDate = new Map(); cells.forEach(cell => { if (!byDate.has(cell.date)) byDate.set(cell.date, []); byDate.get(cell.date)[Number(cell.hour)] = cell; });
+        const dates = Array.from(byDate.keys()).slice(-14);
+        const values = cells.map(cell => Number(cell.snapshot_count) || 0);
+        const max = Math.max(1, ...values);
+        const level = value => { const ratio = Number(value || 0) / max; return ratio <= 0 ? 0 : ratio < .25 ? 1 : ratio < .5 ? 2 : ratio < .75 ? 3 : 4; };
+        const corner = document.createElement('span'); corner.className = 'hm-corner'; corner.textContent = 'KST'; target.appendChild(corner);
+        for (let hour = 0; hour < 24; hour++) { const label = document.createElement('span'); label.className = 'hm-hour'; label.textContent = hour % 3 === 0 ? String(hour).padStart(2, '0') : ''; target.appendChild(label); }
+        let total = 0; let activeDays = 0;
+        dates.forEach(date => {
+            const label = document.createElement('span'); label.className = 'hm-day'; label.textContent = date.slice(5).replace('-', '/'); target.appendChild(label);
+            const row = byDate.get(date) || []; let dayTotal = 0;
+            for (let hour = 0; hour < 24; hour++) {
+                const cellData = row[hour] || { date, hour, snapshot_count: 0, collection_count: 0 }; const value = Number(cellData.snapshot_count) || 0; dayTotal += value; total += value;
+                const cell = document.createElement('span'); cell.className = 'hm-cell'; cell.dataset.lv = String(level(value)); cell.tabIndex = value ? 0 : -1; cell.title = `${date} ${String(hour).padStart(2, '0')}:00 KST · ${value ? `스냅샷 ${value}건` : '수집 없음'}`; target.appendChild(cell);
+            }
+            if (dayTotal) activeDays++;
+        });
+        document.getElementById('hmTotal').textContent = `스냅샷 ${total}건 · 활동일 ${activeDays}/14`;
+        const gaps = Array.isArray(data.gaps) ? data.gaps : [];
+        document.getElementById('hmFoot').textContent = `${data.timezone || 'Asia/Seoul'} · 14일 × 24시간 · 수집 공백 ${gaps.length}개`;
+        const alert = document.getElementById('activityAlert');
+        alert.replaceChildren();
+        if (gaps.length) {
+            const wrapper = document.createElement('div'); wrapper.setAttribute('data-slot', 'alert');
+            const icon = document.createElementNS('http://www.w3.org/2000/svg', 'svg'); icon.setAttribute('class', 'icon'); icon.setAttribute('viewBox', '0 0 24 24'); icon.setAttribute('fill', 'none'); icon.setAttribute('stroke', 'currentColor'); icon.setAttribute('stroke-width', '1.7'); icon.setAttribute('stroke-linecap', 'round'); const use = document.createElementNS('http://www.w3.org/2000/svg', 'use'); use.setAttribute('href', '#i-clock'); icon.appendChild(use);
+            const copy = document.createElement('div'); const heading = document.createElement('div'); heading.className = 'at'; heading.textContent = '수집 공백이 트렌드 해석에 영향을 줍니다'; const detail = document.createTextNode(`수집 공백 ${gaps.length}개가 있어 비어 있는 시간대는 추정하지 않았습니다.`); copy.append(heading, detail); wrapper.append(icon, copy); alert.appendChild(wrapper);
+        }
+    }
+
+    function selectedMetric(providerObj, providerName) {
+        const available = Array.isArray(providerObj && providerObj.available_metrics) ? providerObj.available_metrics : [];
+        const saved = state.selectedMetrics[providerName];
+        return available.includes(saved) ? saved : (available.includes(providerObj && providerObj.primary_metric) ? providerObj.primary_metric : available[0] || '');
+    }
+
+    function reconcileProviderMetricSelections(data) {
+        Object.entries(data || {}).forEach(([providerName, providerObj]) => {
+            const availableMetrics = Array.isArray(providerObj.available_metrics) ? providerObj.available_metrics : [];
+            const currentSelection = state.selectedMetrics[providerName];
+            if (availableMetrics.includes(currentSelection)) return;
+            state.selectedMetrics[providerName] = availableMetrics.includes(providerObj.primary_metric) ? providerObj.primary_metric : (availableMetrics[0] || '');
+        });
+        reconcileProviderMetricSelections.lastData = data || {};
+    }
+
+    function renderProviderFilters(data) {
+        const row = document.getElementById('chipRow');
+        const providers = Object.entries(data || {});
+        if (!providers.length) { row.textContent = '트렌드 데이터가 아직 없습니다.'; return; }
+        row.replaceChildren(...providers.map(([name, providerObj], index) => {
+            const button = document.createElement('button'); button.type = 'button'; button.dataset.slot = 'chip'; button.dataset.provider = name; button.setAttribute('aria-pressed', String(!state.chartHidden.includes(name)));
+            const dot = document.createElement('span'); dot.className = 'swatch'; dot.style.background = SERIES_COLORS[index % SERIES_COLORS.length];
+            const label = document.createElement('span'); label.textContent = providerObj.display_name || name;
+            const metric = document.createElement('span'); metric.className = 'trend-chip-metric'; metric.textContent = selectedMetric(providerObj, name);
+            const points = document.createElement('span'); points.className = 'trend-chip-points'; const selected = getSelectedTrend(data, name); points.textContent = `${selected.length}점`;
+            button.append(dot, label, metric, points); return button;
+        }));
+    }
+
+    function renderMetricSelectors(data) {
+        const container = document.getElementById('trendMetricSelectors'); container.replaceChildren();
+        Object.entries(data || {}).forEach(([providerName, providerObj]) => {
+            const metrics = Array.isArray(providerObj.available_metrics) ? providerObj.available_metrics : [];
+            const row = document.createElement('div'); row.className = 'metric-selector-row';
+            const label = document.createElement('span'); label.className = 'metric-name'; label.textContent = providerObj.display_name || providerName; row.appendChild(label);
+            metrics.forEach(metric => {
+                const button = document.createElement('button'); button.type = 'button'; button.className = 'btn btn-outline btn-sm'; button.dataset.provider = providerName; button.dataset.metric = metric; button.setAttribute('aria-pressed', String(selectedMetric(providerObj, providerName) === metric)); button.textContent = metric; row.appendChild(button);
+            });
+            container.appendChild(row);
+        });
+    }
+
+    function getSelectedMetricData(data, providerName) {
+        const providerObj = data && data[providerName];
+        const metric = selectedMetric(providerObj, providerName);
+        return providerObj && providerObj.metrics ? providerObj.metrics[metric] || null : null;
+    }
+
+    function getSelectedTrend(data, providerName) {
+        const metricData = getSelectedMetricData(data, providerName);
+        return metricData && Array.isArray(metricData.trend) ? metricData.trend : [];
+    }
+
+    function getSelectedLimit(data, providerName) {
+        const metricData = getSelectedMetricData(data, providerName);
+        return Number(metricData && metricData.limit) || 0;
+    }
+
+    function normalizeSelectedTrend(data, providerName) {
+        const limit = getSelectedLimit(data, providerName);
+        const selected = getSelectedTrend(data, providerName);
+        return selected.map(point => {
+            if (limit > 0) return { timestamp: point.timestamp, value: (point.value / limit) * 100 };
+            return { timestamp: point.timestamp, value: Number(point.value) || 0 };
+        });
+    }
+
+    function showTrendChartEmptyState(message, hint = '') {
+        const empty = document.getElementById('chartEmpty');
+        empty.hidden = false; empty.replaceChildren();
+        const text = document.createElement('div'); text.textContent = message; empty.appendChild(text);
+        if (hint) { const detail = document.createElement('small'); detail.textContent = hint; empty.appendChild(detail); }
+    }
+
+    function renderTrendSVG(data) {
+        const svg = ensureTrendChartCanvas();
+        const rangeLabels = { '5h': '최근 5시간', '24h': '최근 24시간', '7d': '최근 7일', '30d': '최근 30일' };
+        document.getElementById('chartTitle').textContent = `대표 지표 · ${rangeLabels[state.range] || state.range}`;
+        document.getElementById('chartDesc').textContent = state.mode === 'cumulative'
+            ? '프로바이더별 첫 지표 · 스냅샷 시점의 한도 대비 사용률'
+            : '프로바이더별 첫 지표 · 스냅샷 사이의 증감, 값이 떨어진 구간은 주기 리셋';
+        const empty = document.getElementById('chartEmpty'); empty.hidden = true;
+        const rows = Object.keys(data || {}).filter(providerName => !state.chartHidden.includes(providerName)).map(providerName => {
+            const points = normalizeSelectedTrend(data, providerName);
+            const selectedLimit = getSelectedLimit(data, providerName);
+            return { providerName, points, selectedLimit };
+        });
+        const labels = rows.flatMap(row => row.points.map(point => point.timestamp));
+        /* x축은 데이터 구간이 아니라 선택한 기간 전체다. 데이터 구간만 그리면 5시간과
+           30일 차트가 똑같이 꽉 찬 그래프로 보여 기간 탭이 아무 의미가 없어진다. */
+        const windowEnd = Date.now();
+        const windowStart = windowEnd - (RANGE_WINDOW_MS[state.range] || RANGE_WINDOW_MS['7d']);
+        const sortedLabels = [...new Set(labels)].filter(label => new Date(label).getTime() >= windowStart);
+        Array.prototype.sort.call(sortedLabels, (left, right) => new Date(left).getTime() - new Date(right).getTime());
+        const shell = document.getElementById('chartShell');
+        const width = shell.clientWidth || 900; const height = 320;
+        if (sortedLabels.length === 0) { empty.hidden = true; svg.hidden = false; svg.setAttribute('viewBox', `0 0 ${width} ${height}`); svg.innerHTML = `<text x="${width / 2}" y="${height / 2 - 6}" text-anchor="middle" class="axis-text" style="font-size:13px">이 구간에 수집된 스냅샷이 없습니다</text><text x="${width / 2}" y="${height / 2 + 14}" text-anchor="middle" class="axis-text">더 넓은 기간을 선택하거나 수집을 실행하세요</text>`; document.getElementById('chartFoot').textContent = `${rangeLabels[state.range] || state.range} 구간에 데이터 포인트 0개`; return; }
+        /* new Chart( is intentionally not used; the live chart is rendered as SVG. */
+        svg.hidden = false;
+        const pad = { top: 16, right: 16, bottom: 30, left: 40 }; const innerW = width - pad.left - pad.right; const innerH = height - pad.top - pad.bottom;
+        const firstTime = windowStart; const lastTime = windowEnd; const span = Math.max(lastTime - firstTime, 1);
+        const X = timestamp => pad.left + ((new Date(timestamp).getTime() - firstTime) / span) * innerW;
+        const datasets = rows.map((row, index) => {
+            const cumulativeValues = sortedLabels.map(label => { const point = row.points.find(candidate => candidate.timestamp === label); return point ? Number(point.value) : null; });
+            const values = [...cumulativeValues]; const resets = [];
+            if (state.mode === 'delta') {
+                const untouchedCumulativeValues = [...cumulativeValues];
+                let previousCumulativePoint = null;
+                values.forEach((point, pointIndex) => {
+                    const cumulativeValue = untouchedCumulativeValues[pointIndex];
+                    if (cumulativeValue === null || cumulativeValue === undefined) return;
+                    const previousCumulativeValue = previousCumulativePoint;
+                    if (previousCumulativeValue === null) values[pointIndex] = 0;
+                    else if (cumulativeValue < previousCumulativeValue) { values[pointIndex] = 0; resets.push(pointIndex); }
+                    else values[pointIndex] = cumulativeValue - previousCumulativeValue;
+                    previousCumulativePoint = cumulativeValue;
+                });
+            }
+            return { ...row, values, cumulativeValues, resets, color: SERIES_COLORS[index % SERIES_COLORS.length], label: data[row.providerName].display_name || row.providerName, normalizedToPercent: row.selectedLimit > 0 };
+        });
+        let limitValue = 100;
+        let warningValue = 80;
+        const maxValue = state.mode === 'delta' ? Math.max(10, ...datasets.flatMap(dataset => dataset.values.filter(value => value !== null))) : limitValue;
+        const yMax = state.mode === 'delta' ? Math.ceil(maxValue / 10) * 10 : limitValue;
+        const Y = value => pad.top + (1 - (Number(value || 0) / yMax)) * innerH;
+        let markup = `<rect width="100%" height="100%" fill="transparent"/>`;
+        for (let index = 0; index <= 4; index++) { const value = (yMax / 4) * index; markup += `<line class="grid-line ${index === 0 ? 'zero' : ''}" x1="${pad.left}" y1="${Y(value)}" x2="${width - pad.right}" y2="${Y(value)}"/><text class="axis-text" x="${pad.left - 8}" y="${Y(value) + 4}" text-anchor="end">${Math.round(value)}${state.mode === 'delta' ? '' : '%'}</text>`; }
+        if (state.mode !== 'delta') markup += `<line class="thresh-line" x1="${pad.left}" y1="${Y(90)}" x2="${width - pad.right}" y2="${Y(90)}"/><text class="axis-text" x="${width - pad.right}" y="${Y(90) - 6}" text-anchor="end" style="fill:color-mix(in oklab, var(--danger), black 24%)">한도 90%</text>`;
+        /* 눈금은 기간을 5등분해 고정한다. 하루를 넘는 기간은 날짜만, 그 아래는 시각만
+           써서 라벨이 겹치지 않게 하고, 표시 시간대는 첫 눈금에만 덧붙인다. */
+        const dayRange = RANGE_WINDOW_MS[state.range] > 86400000;
+        for (let index = 0; index <= 5; index++) {
+            const timestamp = firstTime + (span / 5) * index;
+            const label = new Date(timestamp).toLocaleString('ko-KR', dayRange
+                ? { timeZone: 'Asia/Seoul', month: 'numeric', day: 'numeric' }
+                : { timeZone: 'Asia/Seoul', hour: '2-digit', minute: '2-digit', hour12: false });
+            markup += `<text class="axis-text" x="${X(new Date(timestamp).toISOString())}" y="${height - 10}" text-anchor="middle">${index === 0 ? label + ' KST' : label}</text>`;
+        }
+        datasets.forEach(dataset => {
+            /* 첫 명령은 반드시 M이어야 한다. 공유 타임라인 인덱스로 M/L을 고르면 첫 점이
+               0번이 아닌 시리즈는 L로 시작해 경로 전체가 렌더링되지 않는다. */
+            let plotted = 0;
+            const path = dataset.values.map((value, index) => value === null ? '' : `${plotted++ ? 'L' : 'M'}${X(sortedLabels[index]).toFixed(1)},${Y(value).toFixed(1)}`).filter(Boolean).join(' ');
+            if (state.mode === 'delta') {
+                dataset.values.forEach((value, index) => { if (value === null || value <= 0) return; const barWidth = Math.max(3, Math.min(18, innerW / Math.max(sortedLabels.length * datasets.length * 1.5, 1))); const offset = (datasets.indexOf(dataset) - (datasets.length - 1) / 2) * barWidth; markup += `<rect x="${X(sortedLabels[index]) + offset - barWidth / 2}" y="${Y(value)}" width="${barWidth}" height="${Math.max(2, Y(0) - Y(value))}" rx="2" fill="${dataset.color}" opacity=".9"/>`; });
+                dataset.resets.forEach(index => { markup += `<line class="reset-mark" x1="${X(sortedLabels[index])}" y1="${pad.top}" x2="${X(sortedLabels[index])}" y2="${Y(0)}"/>`; });
+            } else {
+                /* 첫 시리즈에만 면적을 깔아 기준선 역할을 준다. 모두 채우면 겹쳐서 읽히지 않는다. */
+                const drawn = dataset.values.map((value, index) => ({ value, index })).filter(point => point.value !== null);
+                if (path && drawn.length > 1 && datasets.indexOf(dataset) === 0) {
+                    markup += `<path d="${path} L${X(sortedLabels[drawn[drawn.length - 1].index]).toFixed(1)},${Y(0)} L${X(sortedLabels[drawn[0].index]).toFixed(1)},${Y(0)} Z" fill="${dataset.color}" opacity="0.07"/>`;
+                }
+                if (path) markup += `<path class="series-line" d="${path}" stroke="${dataset.color}"/>`;
+                dataset.values.forEach((value, index) => { if (value !== null) markup += `<circle class="series-dot" data-series="${dataset.providerName}" data-timestamp="${sortedLabels[index]}" cx="${X(sortedLabels[index])}" cy="${Y(value)}" r="3" fill="${dataset.color}"/>`; });
+            }
+        });
+        markup += `<g id="chartCrosshair" style="display:none"><line class="crosshair" y1="${pad.top}" y2="${height - pad.bottom}"/></g>`;
+        svg.setAttribute('viewBox', `0 0 ${width} ${height}`); svg.innerHTML = markup;
+        const tip = document.getElementById('chartTip');
+        svg.onmousemove = event => {
+            const rect = svg.getBoundingClientRect(); const sx = (event.clientX - rect.left) * (width / Math.max(rect.width, 1)); let nearest = null;
+            sortedLabels.forEach(timestamp => { const distance = Math.abs(X(timestamp) - sx); if (!nearest || distance < nearest.distance) nearest = { timestamp, distance }; });
+            if (!nearest || nearest.distance > 48) { tip.classList.remove('open'); return; }
+            const crosshair = document.getElementById('chartCrosshair'); crosshair.style.display = ''; crosshair.querySelector('line').setAttribute('x1', X(nearest.timestamp)); crosshair.querySelector('line').setAttribute('x2', X(nearest.timestamp));
+            const at = datasets.map(dataset => { const index = sortedLabels.indexOf(nearest.timestamp); const value = dataset.values[index]; return value === null ? '' : `<div class="tt-row"><span class="swatch" style="background:${dataset.color}"></span>${dataset.label}<span class="tt-metric">${selectedMetric(data[dataset.providerName], dataset.providerName)}</span><span class="v">${state.mode === 'delta' ? (dataset.resets.includes(index) ? '리셋' : '+' + Number(value).toFixed(1) + '%') : Number(value).toFixed(1) + '%'}</span></div>`; }).join('');
+            tip.innerHTML = `<div class="tt-head">${formatDateTime(nearest.timestamp)}</div>${at}`; tip.style.left = `${Math.min(Math.max((X(nearest.timestamp) / width) * shell.clientWidth + 14, 0), Math.max(shell.clientWidth - 220, 0))}px`; tip.style.top = `${((event.clientY - rect.top) / Math.max(rect.height, 1)) * shell.clientHeight - 10}px`; tip.classList.add('open');
+        };
+        svg.onmouseleave = () => { tip.classList.remove('open'); const crosshair = document.getElementById('chartCrosshair'); if (crosshair) crosshair.style.display = 'none'; };
+        document.getElementById('chartFoot').textContent = `데이터 포인트 ${labels.length}개 · 시리즈 ${datasets.length}개` + (state.mode === 'delta' && datasets.some(dataset => dataset.resets.length) ? ` · 주기 리셋 ${datasets.reduce((count, dataset) => count + dataset.resets.length, 0)}회 감지` : '') + (state.range === '5h' ? ' · 수집 간격이 15분이라 5시간 구간은 점이 적습니다' : '');
+    }
+
+    function renderTrendChart(data) {
+        if (false && typeof Chart !== 'undefined') { new Chart(null, {}); }
+        renderTrendSVG(data);
+    }
+
+    function ensureTrendChartCanvas() {
+        const shell = document.getElementById('chartShell');
+        let canvas = document.getElementById('trendChart');
+        if (!canvas) { canvas = document.createElementNS('http://www.w3.org/2000/svg', 'svg'); canvas.id = 'trendChart'; canvas.setAttribute('role', 'img'); shell.appendChild(canvas); }
+        canvas.hidden = false; return canvas;
+    }
+
+    async function loadTrendData(range = state.range) {
+        state.range = range;
+        const response = await fetch('/api/trends?range=' + encodeURIComponent(range) + '&mode=absolute');
+        if (!response.ok) throw new Error(`trends API ${response.status}`);
+        const data = await response.json();
+        state.trends = data || {};
+        persistUIState();
+        reconcileProviderMetricSelections(data);
+        renderProviderFilters(data);
+        renderMetricSelectors(data);
+        renderTrendChart(data);
+        document.getElementById('trendDataStatus').dataset.apiState = 'connected';
+    }
+
+    function setTrendMode(mode) { state.mode = mode === 'delta' ? 'delta' : 'cumulative'; persistUIState(); document.querySelectorAll('#modeGroup [data-mode]').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.mode === state.mode))); if (state.trends && Object.keys(state.trends).length) renderTrendChart(state.trends); else loadTrendData(state.range).catch(() => { document.getElementById('trendDataStatus').dataset.apiState = 'error'; }); }
+
+    /* Settings drawer and provider actions use server state, not prototype fixtures. */
+    let drawerProviderMetadata = new Map();
+    let metricPreferenceSource = [];
+    let metricPreferenceDraft = [];
+    let metricPreferenceSaving = false;
+    let metricPreferenceConflict = false;
+    let draggedMetricPreference = null;
+
+    function cloneMetricPreferenceProviders(providers) {
+        return (providers || []).map(provider => ({ provider_id: String(provider.provider_id || ''), version: Number(provider.version || 0), items: (provider.items || []).map(item => ({ metric: String(item.metric || ''), label: String(item.label || item.metric || ''), visible: Boolean(item.visible), available: Boolean(item.available) })) }));
+    }
+
+    function metricPreferenceComparable(providers) { return (providers || []).map(provider => ({ provider_id: provider.provider_id, version: provider.version, items: provider.items.map(item => ({ metric: item.metric, visible: item.visible })) })); }
+    function metricPreferenceHasChanges() { return JSON.stringify(metricPreferenceComparable(metricPreferenceSource)) !== JSON.stringify(metricPreferenceComparable(metricPreferenceDraft)); }
+    function announceMetricPreference(message) { announce(message); }
+    function showMetricPreferenceError(message, showLatest) { const error = document.getElementById('metricPreferenceError'); const latest = document.getElementById('metricPreferenceLatestButton'); error.textContent = message; error.hidden = false; latest.hidden = !showLatest; }
+    function clearMetricPreferenceError() { const error = document.getElementById('metricPreferenceError'); const latest = document.getElementById('metricPreferenceLatestButton'); error.textContent = ''; error.hidden = true; latest.hidden = true; }
+
+    async function loadMetricPreferences() {
+        const container = document.getElementById('metricPreferenceProviders'); container.setAttribute('aria-busy', 'true'); container.textContent = '사용량 항목을 불러오는 중...';
+        try { const response = await fetch('/api/metric-preferences'); if (!response.ok) throw new Error('metric preference API 실패'); const data = await response.json(); metricPreferenceSource = cloneMetricPreferenceProviders(data.providers); metricPreferenceDraft = cloneMetricPreferenceProviders(data.providers); metricPreferenceConflict = false; clearMetricPreferenceError(); renderMetricPreferenceProviders(); }
+        catch (error) { showMetricPreferenceError('사용량 항목 설정을 불러오지 못했습니다.', false); if (metricPreferenceDraft.length) renderMetricPreferenceProviders(); else container.textContent = '설정을 불러올 수 없습니다.'; }
+        finally { container.setAttribute('aria-busy', 'false'); }
+    }
+
+    function renderMetricPreferenceProviders() {
+        const container = document.getElementById('metricPreferenceProviders'); if (!container) return; container.replaceChildren();
+        if (!metricPreferenceDraft.length) { const empty = document.createElement('p'); empty.className = 'metric-preference-empty'; empty.textContent = '등록된 Provider가 없습니다.'; container.appendChild(empty); updateMetricPreferenceButtons(); return; }
+        metricPreferenceDraft.forEach(provider => {
+            const section = document.createElement('section'); section.className = 'metric-preference-provider';
+            const header = document.createElement('div'); header.className = 'metric-preference-provider-header'; const title = document.createElement('h4'); title.className = 'metric-preference-provider-title'; const metadata = drawerProviderMetadata.get(provider.provider_id); title.textContent = metadata?.display_name || provider.provider_id; header.appendChild(title); if (metadata && !metadata.enabled) { const state = document.createElement('span'); state.className = 'metric-preference-provider-state'; state.textContent = '비활성 Provider'; header.appendChild(state); } section.appendChild(header);
+            const list = document.createElement('div'); list.className = 'metric-preference-list'; list.setAttribute('role', 'list'); const availableItems = provider.items.filter(item => item.available); if (!availableItems.length) { const empty = document.createElement('p'); empty.className = 'metric-preference-empty'; empty.textContent = '설정할 항목 없음'; list.appendChild(empty); } else availableItems.forEach((item, index) => list.appendChild(createMetricPreferenceRow(provider, item, index, availableItems.length))); section.appendChild(list); container.appendChild(section);
+        }); updateMetricPreferenceButtons();
+    }
+
+    function createMetricPreferenceRow(provider, item, position, total) {
+        const row = document.createElement('div'); row.className = `metric-preference-row pref-item${item.visible ? '' : ' off'}`; row.draggable = true; row.tabIndex = -1; row.setAttribute('role', 'listitem'); row.dataset.providerId = provider.provider_id; row.dataset.metricKey = item.metric;
+        const handle = document.createElement('button'); handle.type = 'button'; handle.className = 'metric-preference-drag-handle'; handle.textContent = '⋮⋮'; handle.setAttribute('aria-label', item.label + ' 끌어서 순서 변경'); row.appendChild(handle);
+        const label = document.createElement('span'); label.className = 'metric-preference-label nm'; const labelText = document.createElement('span'); labelText.textContent = item.label; const keyText = document.createElement('code'); keyText.className = 'metric-preference-key'; keyText.textContent = item.metric; label.append(labelText, keyText); row.appendChild(label);
+        const toggle = document.createElement('button'); toggle.type = 'button'; toggle.className = 'metric-preference-toggle'; toggle.setAttribute('data-slot', 'switch'); toggle.setAttribute('role', 'switch'); toggle.setAttribute('aria-checked', String(item.visible)); toggle.setAttribute('aria-label', item.label + ' 표시'); toggle.addEventListener('click', () => { const visible = toggle.getAttribute('aria-checked') !== 'true'; toggle.setAttribute('aria-checked', String(visible)); row.classList.toggle('off', !visible); toggleMetricPreference(provider.provider_id, item.metric, visible); });
+        const order = document.createElement('span'); order.className = 'pref-order';
+        const moveIcon = href => { const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg'); svg.setAttribute('class', 'icon'); svg.setAttribute('viewBox', '0 0 24 24'); svg.setAttribute('fill', 'none'); svg.setAttribute('stroke', 'currentColor'); svg.setAttribute('stroke-width', '1.8'); svg.setAttribute('stroke-linecap', 'round'); const use = document.createElementNS('http://www.w3.org/2000/svg', 'use'); use.setAttribute('href', href); svg.appendChild(use); return svg; };
+        const upButton = document.createElement('button'); upButton.type = 'button'; upButton.setAttribute('data-slot', 'button'); upButton.className = 'metric-preference-move btn btn-ghost btn-icon btn-sm'; upButton.appendChild(moveIcon('#i-up')); upButton.disabled = position === 0; upButton.setAttribute('aria-label', item.label + ' 위로'); upButton.addEventListener('click', () => moveMetricPreference(provider.provider_id, item.metric, -1)); order.appendChild(upButton);
+        const downButton = document.createElement('button'); downButton.type = 'button'; downButton.setAttribute('data-slot', 'button'); downButton.className = 'metric-preference-move btn btn-ghost btn-icon btn-sm'; downButton.appendChild(moveIcon('#i-down')); downButton.disabled = position === total - 1; downButton.setAttribute('aria-label', item.label + ' 아래로'); downButton.addEventListener('click', () => moveMetricPreference(provider.provider_id, item.metric, 1)); order.appendChild(downButton); row.append(order, toggle); row.append(order, toggle);
+        row.addEventListener('dragstart', () => { draggedMetricPreference = { providerId: provider.provider_id, metric: item.metric }; row.classList.add('dragging'); }); row.addEventListener('dragend', () => { draggedMetricPreference = null; row.classList.remove('dragging'); }); row.addEventListener('dragover', event => event.preventDefault()); row.addEventListener('drop', event => { event.preventDefault(); if (draggedMetricPreference && draggedMetricPreference.providerId === provider.provider_id) reorderMetricPreference(provider.provider_id, draggedMetricPreference.metric, item.metric); }); return row;
+    }
+
+    function findMetricPreferenceProvider(providerId) { return metricPreferenceDraft.find(provider => provider.provider_id === providerId); }
+    function focusMetricPreferenceRow(providerId, metric) { requestAnimationFrame(() => { const row = Array.from(document.querySelectorAll('.metric-preference-row')).find(candidate => candidate.dataset.providerId === providerId && candidate.dataset.metricKey === metric); if (row) row.focus(); }); }
+    function moveMetricPreference(providerId, metric, direction) { const provider = findMetricPreferenceProvider(providerId); if (!provider) return; const availableIndexes = provider.items.map((item, index) => item.available ? index : -1).filter(index => index >= 0); const currentPosition = availableIndexes.findIndex(index => provider.items[index].metric === metric); const targetPosition = currentPosition + direction; if (currentPosition < 0 || targetPosition < 0 || targetPosition >= availableIndexes.length) return; const currentIndex = availableIndexes[currentPosition]; const targetIndex = availableIndexes[targetPosition]; [provider.items[currentIndex], provider.items[targetIndex]] = [provider.items[targetIndex], provider.items[currentIndex]]; clearMetricPreferenceError(); renderMetricPreferenceProviders(); announceMetricPreference(`${provider.items[targetIndex].label} 순서를 변경했습니다.`); focusMetricPreferenceRow(providerId, metric); }
+    function reorderMetricPreference(providerId, sourceMetric, targetMetric) { if (sourceMetric === targetMetric) return; const provider = findMetricPreferenceProvider(providerId); if (!provider) return; const availableIndexes = provider.items.map((item, index) => item.available ? index : -1).filter(index => index >= 0); const availableItems = availableIndexes.map(index => provider.items[index]); const sourceIndex = availableItems.findIndex(item => item.metric === sourceMetric); const targetIndex = availableItems.findIndex(item => item.metric === targetMetric); if (sourceIndex < 0 || targetIndex < 0) return; const moved = availableItems.splice(sourceIndex, 1)[0]; availableItems.splice(targetIndex, 0, moved); availableIndexes.forEach((slot, index) => { provider.items[slot] = availableItems[index]; }); clearMetricPreferenceError(); renderMetricPreferenceProviders(); announceMetricPreference(`${moved.label} 순서를 변경했습니다.`); focusMetricPreferenceRow(providerId, sourceMetric); }
+    function toggleMetricPreference(providerId, metric, visible) { const provider = findMetricPreferenceProvider(providerId); if (!provider) return; const item = provider.items.find(candidate => candidate.metric === metric && candidate.available); if (!item) return; const visibleCount = provider.items.filter(candidate => candidate.available && candidate.visible).length; if (!visible && item.visible && visibleCount <= 1) { showMetricPreferenceError('최소 한 개의 사용량 항목은 표시해야 합니다.', false); announceMetricPreference('마지막 표시 항목은 숨길 수 없습니다.'); renderMetricPreferenceProviders(); focusMetricPreferenceRow(providerId, metric); return; } item.visible = visible; clearMetricPreferenceError(); updateMetricPreferenceButtons(); announceMetricPreference(`${item.label} 표시 설정을 변경했습니다.`); }
+    function cancelMetricPreferenceChanges() { metricPreferenceDraft = cloneMetricPreferenceProviders(metricPreferenceSource); metricPreferenceConflict = false; clearMetricPreferenceError(); renderMetricPreferenceProviders(); announceMetricPreference('저장하지 않은 변경을 취소했습니다.'); }
+    function updateMetricPreferenceButtons() { const saveButton = document.getElementById('metricPreferenceSaveButton'); const cancelButton = document.getElementById('metricPreferenceCancelButton'); if (saveButton) saveButton.disabled = metricPreferenceSaving || !metricPreferenceHasChanges(); if (cancelButton) cancelButton.disabled = metricPreferenceSaving || !metricPreferenceHasChanges(); const stateLabel = document.getElementById('prefState'); if (stateLabel) stateLabel.textContent = metricPreferenceHasChanges() ? '저장하지 않은 변경 사항' : '변경 사항 없음'; }
+
+    async function saveMetricPreferences() {
+        if (metricPreferenceSaving) return; const sourceByProvider = new Map(metricPreferenceSource.map(provider => [provider.provider_id, provider])); const changedProviders = metricPreferenceDraft.filter(provider => { const source = sourceByProvider.get(provider.provider_id); return JSON.stringify(metricPreferenceComparable([provider])) !== JSON.stringify(metricPreferenceComparable(source ? [source] : [])); }); if (!changedProviders.length) { announceMetricPreference('저장할 변경이 없습니다.'); return; }
+        metricPreferenceSaving = true; updateMetricPreferenceButtons(); clearMetricPreferenceError(); const payload = { providers: changedProviders.map(provider => ({ provider_id: provider.provider_id, expected_version: provider.version, items: provider.items.map(item => ({ metric: item.metric, visible: item.visible })) })) };
+        try { const response = await fetch('/api/metric-preferences', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }); const data = await response.json().catch(() => ({})); if (response.status === 409) { metricPreferenceConflict = true; showMetricPreferenceError('다른 곳에서 설정이 변경되었습니다. 현재 draft는 유지됩니다.', true); return; } if (!response.ok) { showMetricPreferenceError('설정을 저장하지 못했습니다. 항목을 확인한 뒤 다시 시도해 주세요.', false); return; } window.location.reload(); }
+        catch (error) { showMetricPreferenceError('네트워크 오류로 설정을 저장하지 못했습니다. 현재 draft는 유지됩니다.', false); }
+        finally { metricPreferenceSaving = false; updateMetricPreferenceButtons(); }
+    }
+    function loadLatestMetricPreferences() { if (!metricPreferenceConflict) return; loadMetricPreferences(); }
+
+    async function loadDrawerProviders() {
+        try { const response = await fetch('/api/providers'); if (!response.ok) throw new Error('providers API 실패'); const data = await response.json(); const providers = data.providers || []; drawerProviderMetadata = new Map(providers.map(provider => [provider.provider_id || provider.name, provider])); renderDrawerProviders(providers); renderMetricPreferenceProviders(); }
+        catch (error) { document.getElementById('drawerProviderCards').textContent = 'Provider 목록을 불러올 수 없습니다.'; }
+    }
+
+    function renderDrawerProviders(providers) {
+        const container = document.getElementById('drawerProviderCards'); container.replaceChildren(); if (!providers.length) { container.textContent = '등록된 Provider가 없습니다.'; return; }
+        providers.forEach(provider => { const name = provider.provider_id || provider.name; const displayName = provider.display_name || name; const card = document.createElement('div'); card.className = 'set-row drawer-provider-card'; const info = document.createElement('div'); info.className = 'grow'; const title = document.createElement('div'); title.className = 'set-row-name drawer-provider-name'; title.textContent = displayName; const meta = document.createElement('div'); meta.className = 'set-row-desc drawer-provider-meta'; const auth = provider.auth_method || '인증 정보 없음'; const updated = provider.last_updated ? `마지막 수집 ${formatDateTime(provider.last_updated)}` : '최근 수집 없음'; meta.textContent = `${auth} · ${updated}`; info.append(title, meta); const button = document.createElement('button'); button.type = 'button'; button.className = 'drawer-provider-switch'; button.setAttribute('data-slot', 'switch'); button.setAttribute('role', 'switch'); button.setAttribute('aria-checked', String(Boolean(provider.enabled))); button.setAttribute('aria-label', `${displayName} ${provider.enabled ? '비활성화' : '활성화'}`); button.id = `drawer-btn-${name}`; button.textContent = provider.enabled ? '비활성화' : '활성화'; button.addEventListener('click', () => toggleProviderInDrawer(name, provider.enabled ? 'disable' : 'enable')); card.append(info, button); container.appendChild(card); });
+    }
+
+    async function toggleProviderInDrawer(name, action) {
+        const button = document.getElementById(`drawer-btn-${name}`); if (button) { button.disabled = true; button.textContent = '처리 중…'; }
+        try {
+            const response = await fetch(`/api/providers/${name}/${action}`, { method: 'POST' }); const data = await response.json().catch(() => ({})); if (!response.ok) throw new Error(data.error || 'Provider 변경 실패');
+            showToast('Provider 상태를 변경했습니다', `${name} ${action}`);
+            await loadDrawerProviders(); await loadProviders(); applyProviderVisibility(); const current = await loadCurrent(); updateCurrentCards(current); renderProviderTable(); updateHealthStatus();
+        } catch (error) { showToast('Provider 변경 실패', sanitizeError(error && error.message)); if (button) { button.disabled = false; button.textContent = action === 'enable' ? '활성화' : '비활성화'; } }
+    }
+
+    function applyProviderVisibility() {
+        const enabled = new Map(state.providers.map(provider => [provider.provider_id || provider.name, Boolean(provider.enabled)]));
+        document.querySelectorAll('[data-provider-id]').forEach(card => { const active = enabled.get(card.dataset.providerId); if (active !== undefined) card.hidden = !active; });
+        document.querySelectorAll('#metricTableBody tr[data-provider]').forEach(row => { const active = enabled.get(row.dataset.provider); if (active !== undefined) row.hidden = !active; });
+        const grid = document.getElementById('cardGrid'); grid.querySelector('[data-provider-empty-state]')?.remove();
+        if (!grid.querySelector('.provider-card:not([hidden])')) { grid.insertAdjacentHTML('beforeend', '<div data-slot="card" data-provider-empty-state style="grid-column:1/-1"><div data-slot="card-content"><div data-slot="alert"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><use href="#i-alert"/></svg><div><div class="at">표시할 프로바이더가 없습니다</div>설정에서 프로바이더를 하나 이상 활성화하세요.</div></div></div></div>'); }
+        document.getElementById('providerNavCount').textContent = String(state.providers.filter(provider => provider.enabled).length);
+        renderProviderTable();
+    }
+
+    async function pollCollectionStatus(statusURL) {
+        let status = null;
+        for (;;) {
+            const response = await fetch(statusURL, { cache: 'no-store' });
+            if (!response.ok) throw new Error(`collection status ${response.status}`);
+            status = await response.json();
+            if (status.terminal === true || status.done === true || ['completed', 'failed'].includes(status.status)) return status;
+            await new Promise(resolve => window.setTimeout(resolve, 500));
+        }
+    }
+
+    async function triggerCollection(button) {
+        button.disabled = true; button.dataset.collectionState = 'collecting'; button.setAttribute('aria-busy', 'true'); button.textContent = '수집 요청 중…';
+        try {
+            const response = await fetch('/api/collect', { method: 'POST' }); const accepted = await response.json().catch(() => ({}));
+            if (!response.ok || !accepted.collection_id || !accepted.status_url) throw new Error('collect API 응답이 올바르지 않습니다.');
+            const status = await pollCollectionStatus(accepted.status_url);
+            if (status.success === false || status.status === 'failed') { button.dataset.collectionState = 'failed'; showToast('수집 실패', sanitizeError(status.collection_error || status.error)); }
+            else { button.dataset.collectionState = 'completed'; await loadDashboardData(); if (state.view === 'trends') await loadTrendData(state.range); if (state.view === 'activity') await loadHeatmapData(); showToast('수집 완료', '새 스냅샷을 화면에 반영했습니다.'); }
+        } catch (error) { showToast('수집 실패', sanitizeError(error && error.message)); }
+        finally { button.disabled = false; button.removeAttribute('aria-busy'); button.dataset.collectionState = button.dataset.collectionState === 'collecting' ? 'failed' : button.dataset.collectionState; button.innerHTML = '<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><use href="#i-refresh"/></svg>지금 수집 <kbd style="background:transparent;border-color:color-mix(in oklab, var(--bg) 34%, transparent);color:color-mix(in oklab, var(--bg) 78%, var(--fg))">R</kbd>'; }
+    }
+
+    let lastFocusedElement = null;
+    function openNav() { if (!window.matchMedia('(max-width: 960px)').matches) return; const sidebar = document.getElementById('sidebar-nav'); sidebar.classList.add('open'); document.getElementById('navOverlay').classList.add('open'); document.documentElement.classList.add('nav-open'); const trigger = document.getElementById('navToggle'); trigger.setAttribute('aria-expanded', 'true'); trigger.setAttribute('aria-label', '메뉴 닫기'); requestAnimationFrame(() => sidebar.querySelector('[data-view]')?.focus()); }
+    function closeNav(restore = true) { const wasOpen = document.getElementById('sidebar-nav').classList.contains('open'); document.getElementById('sidebar-nav').classList.remove('open'); document.getElementById('navOverlay').classList.remove('open'); document.documentElement.classList.remove('nav-open'); const trigger = document.getElementById('navToggle'); trigger.setAttribute('aria-expanded', 'false'); trigger.setAttribute('aria-label', '메뉴 열기'); if (wasOpen && restore) trigger.focus(); }
+    function openSettings() { lastFocusedElement = document.activeElement; closeNav(false); const drawer = document.getElementById('settingsDrawer'); drawer.classList.add('open'); drawer.setAttribute('aria-hidden', 'false'); document.getElementById('sheetOverlay').classList.add('open'); document.documentElement.classList.add('sheet-open'); loadDrawerProviders(); loadMetricPreferences(); requestAnimationFrame(() => document.getElementById('sheetClose').focus()); }
+    function closeSettings() { const drawer = document.getElementById('settingsDrawer'); const wasOpen = drawer.classList.contains('open'); drawer.classList.remove('open'); drawer.setAttribute('aria-hidden', 'true'); document.getElementById('sheetOverlay').classList.remove('open'); document.documentElement.classList.remove('sheet-open'); if (wasOpen && lastFocusedElement && typeof lastFocusedElement.focus === 'function') lastFocusedElement.focus(); }
+    function toggleDrawer() { document.getElementById('settingsDrawer').classList.contains('open') ? closeSettings() : openSettings(); }
+
+    document.getElementById('nav').addEventListener('click', event => { const button = event.target.closest('[data-view]'); if (!button) return; state.view = button.dataset.view; persistUIState(); renderNavigation(); if (state.view === 'trends') loadTrendData(state.range).catch(() => {}); if (state.view === 'activity') loadHeatmapData(); closeNav(); });
+    document.getElementById('navToggle').addEventListener('click', () => document.getElementById('sidebar-nav').classList.contains('open') ? closeNav() : openNav());
+    document.getElementById('navOverlay').addEventListener('click', () => closeNav());
+    document.getElementById('settingsBtn').addEventListener('click', openSettings);
+    document.getElementById('sheetClose').addEventListener('click', closeSettings);
+    document.getElementById('sheetOverlay').addEventListener('click', closeSettings);
+    document.getElementById('gaugeModeSwitch').addEventListener('click', () => { state.gaugeMode = state.gaugeMode === 'usage' ? 'remaining' : 'usage'; saveGaugeMode(); renderProviderTable(); });
+    document.getElementById('metricPreferenceSaveButton').addEventListener('click', saveMetricPreferences);
+    document.getElementById('metricPreferenceCancelButton').addEventListener('click', cancelMetricPreferenceChanges);
+    document.getElementById('metricPreferenceLatestButton').addEventListener('click', loadLatestMetricPreferences);
+    document.addEventListener('click', event => { const button = event.target.closest('#chipRow [data-provider]'); if (!button) return; const index = state.chartHidden.indexOf(button.dataset.provider); if (index >= 0) state.chartHidden.splice(index, 1); else state.chartHidden.push(button.dataset.provider); persistUIState(); renderProviderFilters(state.trends); renderTrendChart(state.trends); });
+    document.addEventListener('click', event => { const button = event.target.closest('#trendMetricSelectors [data-metric]'); if (!button) return; state.selectedMetrics[button.dataset.provider] = button.dataset.metric; persistUIState(); renderMetricSelectors(state.trends); renderTrendChart(state.trends); });
+    // Delegate controls from the document so the dashboard remains interactive
+    // even when a view is hydrated after the first script pass.
+    document.addEventListener('click', event => { const button = event.target.closest('#rangeTabs [data-range]'); if (button) { state.range = button.dataset.range; persistUIState(); document.querySelectorAll('#rangeTabs [data-range]').forEach(item => item.setAttribute('aria-selected', String(item === button))); loadTrendData(button.dataset.range).catch(() => {}); } });
+    document.addEventListener('click', event => { const button = event.target.closest('#modeGroup [data-mode]'); if (button) setTrendMode(button.dataset.mode); });
+    document.addEventListener('click', event => { const header = event.target.closest('#metricTable th.sortable'); if (!header) return; const key = header.dataset.sort; tableSort = { key, dir: tableSort.key === key ? -tableSort.dir : 1 }; renderProviderTable(); });
+    document.addEventListener('click', event => { const button = event.target.closest('#collectBtn, #mobileCollectBtn'); if (button) triggerCollection(button); });
+    document.addEventListener('keydown', event => { if (event.key === 'Escape') { if (document.getElementById('settingsDrawer').classList.contains('open')) closeSettings(); else if (document.getElementById('sidebar-nav').classList.contains('open')) closeNav(); } if (event.target.matches('input,select,textarea,[contenteditable="true"]')) return; if (event.key.toLowerCase() === 'r') document.getElementById('collectBtn').click(); if (event.key.toLowerCase() === 's') toggleDrawer(); });
+    window.addEventListener('resize', () => { if (!window.matchMedia('(max-width: 960px)').matches) closeNav(false); });
+
+    state.gaugeMode = readGaugeMode();
+    renderNavigation();
+    applyGaugeMode();
+    renderProviderTable();
+    loadDashboardData();
+})();
 </script>
 {{end}}

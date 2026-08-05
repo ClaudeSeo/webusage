@@ -55,7 +55,7 @@ func TestDashboardTrendChartShouldRenderStrictFirstEmptyState(t *testing.T) {
 		`function showTrendChartEmptyState(message, hint = '')`,
 		`function ensureTrendChartCanvas()`,
 		`if (sortedLabels.length === 0)`,
-		`showTrendChartEmptyState('선택한 항목에 표시할 데이터가 없습니다'`,
+		`이 구간에 수집된 스냅샷이 없습니다`,
 	} {
 		if !strings.Contains(body, required) {
 			t.Fatalf("dashboard missing strict-first empty contract %q", required)
@@ -67,11 +67,9 @@ func TestDashboardTrendChartShouldRenderStrictFirstEmptyState(t *testing.T) {
 		t.Fatal("selected metric lookup must not fall back to another metric with trend data")
 	}
 
-	renderSource := metricPreferenceFunctionSource(t, body, "renderTrendChart", "ensureTrendChartCanvas")
-	emptyIndex := strings.Index(renderSource, "if (sortedLabels.length === 0)")
-	chartIndex := strings.Index(renderSource, "new Chart(")
-	if emptyIndex < 0 || chartIndex < 0 || emptyIndex > chartIndex {
-		t.Fatal("empty trend must be handled before creating a chart")
+	renderSource := metricPreferenceFunctionSource(t, body, "renderTrendSVG", "renderTrendChart")
+	if !strings.Contains(renderSource, "if (sortedLabels.length === 0)") || !strings.Contains(renderSource, "이 구간에 수집된 스냅샷이 없습니다") {
+		t.Fatal("empty trend must be handled by the SVG renderer")
 	}
 }
 
@@ -89,7 +87,7 @@ func TestDashboardTrendChartShouldNormalizeLimitedMetricsToPercent(t *testing.T)
 		`const limit = getSelectedLimit(data, providerName);`,
 		`value: (point.value / limit) * 100`,
 		`const points = normalizeSelectedTrend(data, providerName);`,
-		`normalizedToPercent: selectedLimit > 0`,
+		`normalizedToPercent: row.selectedLimit > 0`,
 		`limitValue = 100;`,
 		`warningValue = 80;`,
 	} {
