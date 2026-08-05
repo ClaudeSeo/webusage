@@ -31,3 +31,4 @@ security-findings-owasp.json
 
 # Claude Code
 .claude/
+.codegraph/
