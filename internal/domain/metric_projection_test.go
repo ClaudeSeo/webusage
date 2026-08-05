@@ -126,6 +126,154 @@ func TestProjectMetricClassifiesSixObservationWindowsAndSeverity(t *testing.T) {
 	}
 }
 
+func TestProjectMetricShouldWidenObservationWindowToWholeCycleWhenSnapshotsAccumulate(t *testing.T) {
+	// Given: a weekly metric collected every five minutes for the past 24 hours,
+	// with the reset still 100 hours away. Usage grows by exactly one unit per
+	// hour, so the pace is identical whether it is read from the last adjacent
+	// pair or from the whole cycle — only the observation window differs.
+	now := time.Date(2026, 8, 5, 12, 0, 0, 0, time.UTC)
+	reset := now.Add(100 * time.Hour)
+	limit := 200.0
+	const steps = 288 // 24 hours at a 5-minute collection interval
+	points := make([]TrendDataPoint, 0, steps+1)
+	for i := 0; i <= steps; i++ {
+		points = append(points, TrendDataPoint{
+			Timestamp: now.Add(-24 * time.Hour).Add(time.Duration(i) * 5 * time.Minute),
+			Value:     10 + float64(i)/12,
+		})
+	}
+
+	// When: the metric projection is computed.
+	got := ProjectMetric(MetricProjectionInput{
+		CycleType: CycleTypeWeekly,
+		Limit:     &limit,
+		ResetAt:   &reset,
+		Now:       now,
+		Snapshots: points,
+	})
+
+	// Then: the observation window spans the collected cycle rather than the
+	// 5-minute collection interval, so the projection is no longer a weak
+	// estimate and is used for severity.
+	if math.Abs(got.ObservationWindowHours-24) > 1e-9 {
+		t.Fatalf("ObservationWindowHours = %v, want 24", got.ObservationWindowHours)
+	}
+	if got.WeakEstimate {
+		t.Fatalf("WeakEstimate = true with a 24-hour window and a 100-hour horizon")
+	}
+	if !got.HasForecast || !got.ForecastUsable {
+		t.Fatalf("forecast = has %v usable %v, want a usable forecast", got.HasForecast, got.ForecastUsable)
+	}
+	if math.Abs(got.PacePerHour-1) > 1e-9 {
+		t.Fatalf("PacePerHour = %v, want 1", got.PacePerHour)
+	}
+	if math.Abs(got.ProjectedUsage-134) > 1e-9 {
+		t.Fatalf("ProjectedUsage = %v, want 134", got.ProjectedUsage)
+	}
+}
+
+func TestProjectMetricShouldMeasurePaceFromResetMarkerWhenCycleContainsAReset(t *testing.T) {
+	// Given: a reset followed by three observations whose overall slope differs
+	// from the slope of the final adjacent pair.
+	now := time.Date(2026, 8, 3, 12, 0, 0, 0, time.UTC)
+	reset := now.Add(100 * time.Hour)
+	limit := 100.0
+	points := []TrendDataPoint{
+		{Timestamp: now.Add(-4 * time.Hour), Value: 30},
+		{Timestamp: now.Add(-3 * time.Hour), Value: 35},
+		{Timestamp: now.Add(-2 * time.Hour), Value: 2}, // reset marker
+		{Timestamp: now.Add(-time.Hour), Value: 10},
+		{Timestamp: now, Value: 12},
+	}
+
+	// When: the metric projection is computed.
+	got := ProjectMetric(MetricProjectionInput{
+		CycleType: CycleTypeWeekly,
+		Limit:     &limit,
+		ResetAt:   &reset,
+		Now:       now,
+		Snapshots: points,
+	})
+
+	// Then: the window starts at the reset marker, not at the oldest snapshot and
+	// not at the final adjacent pair.
+	if math.Abs(got.ObservationWindowHours-2) > 1e-9 {
+		t.Fatalf("ObservationWindowHours = %v, want 2", got.ObservationWindowHours)
+	}
+	if !got.HasPace || math.Abs(got.PacePerHour-5) > 1e-9 {
+		t.Fatalf("PacePerHour = %v (has pace %v), want 5", got.PacePerHour, got.HasPace)
+	}
+}
+
+func TestProjectMetricShouldNotCountACollectionGapOlderThanTheCycleAsObservation(t *testing.T) {
+	// Given: collection stopped for 21 days and resumed 5 minutes ago, so the
+	// only adjacent pair inside the 5-hour cycle is 5 minutes wide. Usage never
+	// decreases, so there is no reset marker to bound the window.
+	now := time.Date(2026, 8, 5, 12, 0, 0, 0, time.UTC)
+	reset := now.Add(4 * time.Hour) // cycle started one hour ago
+	limit := 100.0
+	points := []TrendDataPoint{
+		{Timestamp: now.Add(-21 * 24 * time.Hour), Value: 5},
+		{Timestamp: now.Add(-5 * time.Minute), Value: 8},
+		{Timestamp: now, Value: 9},
+	}
+
+	// When: the metric projection is computed.
+	got := ProjectMetric(MetricProjectionInput{
+		CycleType: CycleTypeRolling5h,
+		Limit:     &limit,
+		ResetAt:   &reset,
+		Now:       now,
+		Snapshots: points,
+	})
+
+	// Then: the pre-cycle snapshot is excluded, so the gap cannot pose as a long
+	// observation and the estimate stays weak.
+	if math.Abs(got.ObservationWindowHours-(5.0/60.0)) > 1e-9 {
+		t.Fatalf("ObservationWindowHours = %v, want %v", got.ObservationWindowHours, 5.0/60.0)
+	}
+	if !got.WeakEstimate {
+		t.Fatalf("WeakEstimate = false, want true for a 5-minute window and a 4-hour horizon")
+	}
+	if got.HasForecast || got.ForecastUsable {
+		t.Fatalf("forecast = has %v usable %v, want no usable forecast", got.HasForecast, got.ForecastUsable)
+	}
+}
+
+func TestProjectMetricShouldKeepObservedPaceWhenCalculatedCycleStartIsInTheFuture(t *testing.T) {
+	// Given: a 5-hour rolling metric whose provider reports a reset further out
+	// than the cycle length, so the calculated cycle start (reset - 5h) lands one
+	// hour in the future and precedes no snapshot at all.
+	now := time.Date(2026, 8, 5, 12, 0, 0, 0, time.UTC)
+	reset := now.Add(6 * time.Hour)
+	limit := 100.0
+	points := []TrendDataPoint{
+		{Timestamp: now.Add(-time.Hour), Value: 20},
+		{Timestamp: now, Value: 40},
+	}
+
+	// When: the metric projection is computed.
+	got := ProjectMetric(MetricProjectionInput{
+		CycleType: CycleTypeRolling5h,
+		Limit:     &limit,
+		ResetAt:   &reset,
+		Now:       now,
+		Snapshots: points,
+	})
+
+	// Then: the observed snapshots still produce a pace and projection, because a
+	// calculated boundary must not discard every observation.
+	if !got.HasPace || math.Abs(got.PacePerHour-20) > 1e-9 {
+		t.Fatalf("PacePerHour = %v (has pace %v), want 20", got.PacePerHour, got.HasPace)
+	}
+	if math.Abs(got.ObservationWindowHours-1) > 1e-9 {
+		t.Fatalf("ObservationWindowHours = %v, want 1", got.ObservationWindowHours)
+	}
+	if !got.HasProjection || math.Abs(got.ProjectedUsage-160) > 1e-9 {
+		t.Fatalf("projection = has %v usage %v, want true and 160", got.HasProjection, got.ProjectedUsage)
+	}
+}
+
 func TestProjectMetricProvidesCycleLabelAndRemainingTime(t *testing.T) {
 	// Given: a metric with its own weekly reset boundary.
 	now := time.Date(2026, 8, 3, 12, 0, 0, 0, time.UTC)

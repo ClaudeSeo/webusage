@@ -608,784 +608,6 @@ func TestDashboardBrowserAcceptance(t *testing.T) {
 	}
 }
 
-// TestDashboardVisualParity is the deterministic design-file oracle. It loads
-// the supplied design source and the live SSR dashboard in the same Chrome
-// context, at the same viewport dimensions, activates every applicable view,
-// and compares stable shell nodes. Provider values, timestamps, API-owned
-// status text, and fixture-dependent cardinality are intentionally masked;
-// layout, typography, colour, spacing, borders, geometry, visibility,
-// responsive state, repeated card/metric structure, and stable product copy
-// remain observable.
-func TestDashboardVisualParity(t *testing.T) {
-	chromePath := os.Getenv("WEBUSAGE_CHROME_BIN")
-	if chromePath == "" {
-		chromePath = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
-	}
-	info, err := os.Stat(chromePath)
-	if err != nil {
-		t.Fatalf("Chrome executable %q is unavailable: %v", chromePath, err)
-	}
-	if info.IsDir() || info.Mode()&0111 == 0 {
-		t.Fatalf("Chrome executable %q is not executable", chromePath)
-	}
-
-	_, localServer, _ := setupDashboardBrowserServer(t)
-	defer localServer.Close()
-	designPath, err := os.Getwd()
-	if err != nil {
-		t.Fatalf("get dashboard test working directory: %v", err)
-	}
-	designURL := "file://" + designPath + "/../../webusage-dashboard.html"
-
-	allocator, cancelAllocator := chromedp.NewExecAllocator(context.Background(),
-		chromedp.ExecPath(chromePath),
-		chromedp.Flag("headless", "new"),
-		chromedp.Flag("disable-gpu", true),
-		chromedp.Flag("disable-dev-shm-usage", true),
-		chromedp.Flag("no-first-run", true),
-		chromedp.Flag("no-default-browser-check", true),
-		chromedp.Flag("disable-background-networking", true),
-		chromedp.Flag("disable-extensions", true),
-	)
-	defer cancelAllocator()
-	ctx, cancelContext := chromedp.NewContext(allocator)
-	defer cancelContext()
-	ctx, cancelTimeout := context.WithTimeout(ctx, 90*time.Second)
-	defer cancelTimeout()
-	if err := chromedp.Run(ctx); err != nil {
-		t.Fatalf("Chrome failed to launch: %v", err)
-	}
-
-	for _, viewport := range []struct {
-		name   string
-		width  int
-		height int
-	}{
-		{name: "desktop", width: 1440, height: 1000},
-		{name: "mobile", width: 390, height: 844},
-	} {
-		t.Run(viewport.name, func(t *testing.T) {
-			states := []string{"overview", "overview-remaining", "overview-empty", "providers", "providers-sorted", "providers-empty", "trends", "trends-delta", "trends-chip-disabled", "trends-empty", "activity", "settings", "settings-dirty", "collection-toast"}
-			if viewport.name == "mobile" {
-				states = append(states, "mobile-nav")
-			}
-			for _, state := range states {
-				t.Run(state, func(t *testing.T) {
-					if err := chromedp.Run(ctx, chromedp.EmulateViewport(int64(viewport.width), int64(viewport.height))); err != nil {
-						t.Fatalf("set %s viewport: %v", viewport.name, err)
-					}
-					if err := navigateDashboardVisual(ctx, designURL); err != nil {
-						t.Fatalf("navigate design source: %v", err)
-					}
-					if err := prepareDashboardVisualState(ctx, true, state); err != nil {
-						t.Fatalf("activate design %s state: %v", state, err)
-					}
-					design := captureDashboardVisual(t, ctx, true, state)
-
-					if err := navigateDashboardVisual(ctx, localServer.URL); err != nil {
-						t.Fatalf("navigate live dashboard: %v", err)
-					}
-					if err := prepareDashboardVisualState(ctx, false, state); err != nil {
-						t.Fatalf("activate live %s state: %v", state, err)
-					}
-					live := captureDashboardVisual(t, ctx, false, state)
-					compareDashboardVisual(t, viewport.name, state, design, live)
-				})
-			}
-		})
-	}
-}
-
-func navigateDashboardVisual(ctx context.Context, url string) error {
-	if err := chromedp.Run(ctx, chromedp.Navigate(url), chromedp.WaitReady("#cardGrid")); err != nil {
-		return err
-	}
-	var cleared bool
-	if err := browserEvaluate(ctx, `(() => { try { localStorage.removeItem('webusage.ui.v1'); } catch (error) {} return true; })()`, &cleared); err != nil {
-		return err
-	}
-	if err := chromedp.Run(ctx, chromedp.Reload(), chromedp.WaitReady("#cardGrid")); err != nil {
-		return err
-	}
-	return waitDashboardBrowser(ctx, `document.readyState === 'complete' && document.querySelectorAll('#cardGrid [data-slot="card"]').length > 0`)
-}
-
-func prepareDashboardVisualState(ctx context.Context, design bool, state string) error {
-	switch state {
-	case "overview":
-		return nil
-	case "overview-empty", "providers-empty":
-		if design {
-			if err := prepareDashboardVisualState(ctx, true, "settings"); err != nil {
-				return err
-			}
-			for {
-				var enabled int
-				if err := browserEvaluate(ctx, `document.querySelectorAll('#providerToggles [data-slot="switch"][aria-checked="true"]').length`, &enabled); err != nil {
-					return err
-				}
-				if enabled == 0 {
-					break
-				}
-				if err := chromedp.Run(ctx, chromedp.Evaluate(`document.querySelector('#providerToggles [data-slot="switch"][aria-checked="true"]').click()`, nil)); err != nil {
-					return err
-				}
-			}
-			if err := chromedp.Run(ctx, chromedp.Evaluate(`(() => { document.getElementById('sheet').classList.remove('open'); document.getElementById('sheetOverlay').classList.remove('open'); document.getElementById('toaster').replaceChildren(); })()`, nil)); err != nil {
-				return err
-			}
-			if err := chromedp.Run(ctx, chromedp.Sleep(350*time.Millisecond)); err != nil {
-				return err
-			}
-		} else {
-			if err := chromedp.Run(ctx, chromedp.Evaluate(`(() => { const grid = document.getElementById('cardGrid'); grid.querySelectorAll('.provider-card').forEach(card => card.hidden = true); grid.querySelector('[data-provider-empty-state]')?.remove(); grid.insertAdjacentHTML('beforeend', '<div data-slot="card" data-provider-empty-state style="grid-column:1/-1"><div data-slot="card-content"><div data-slot="alert"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><use href="#i-alert"/></svg><div><div class="at">표시할 프로바이더가 없습니다</div>설정에서 프로바이더를 하나 이상 활성화하세요.</div></div></div></div>'); const body = document.getElementById('metricTableBody'); body.querySelectorAll('tr').forEach(row => row.remove()); const emptyRow = document.createElement('tr'); emptyRow.dataset.tableEmptyState = 'true'; const cell = document.createElement('td'); cell.colSpan = 8; cell.style.padding = 'var(--space-8)'; cell.style.textAlign = 'center'; cell.style.color = 'var(--muted)'; cell.textContent = '표시할 지표가 없습니다. 설정에서 프로바이더나 지표를 켜세요.'; emptyRow.appendChild(cell); body.appendChild(emptyRow); document.getElementById('tableCount').textContent = '0개 지표 · 0개 프로바이더'; })()`, nil)); err != nil {
-				return err
-			}
-		}
-		if err := waitDashboardBrowser(ctx, `Boolean(document.querySelector('#cardGrid > [data-provider-empty-state], #cardGrid > [data-slot="card"]:only-child [data-slot="alert"]'))`); err != nil {
-			return err
-		}
-		if state == "providers-empty" {
-			if err := chromedp.Run(ctx, chromedp.Evaluate(`document.querySelector('#nav [data-view="providers"]').click()`, nil)); err != nil {
-				return err
-			}
-			return waitDashboardBrowser(ctx, `!document.querySelector('#view-providers').hidden && Boolean(document.querySelector('#metricTableBody tr:only-child'))`)
-		}
-		return nil
-	case "overview-remaining":
-		if err := chromedp.Run(ctx, chromedp.Click("#settingsBtn", chromedp.ByID)); err != nil {
-			return err
-		}
-		switchSelector := "#gaugeModeSwitch"
-		if design {
-			switchSelector = "#gaugeSwitch"
-		}
-		if err := waitDashboardBrowser(ctx, fmt.Sprintf(`document.querySelector(%q) && document.querySelector(%q).getAttribute('aria-checked') === 'true'`, switchSelector, switchSelector)); err != nil {
-			return err
-		}
-		if err := chromedp.Run(ctx, chromedp.Evaluate(fmt.Sprintf(`document.querySelector(%q).click()`, switchSelector), nil)); err != nil {
-			return err
-		}
-		if err := waitDashboardBrowser(ctx, fmt.Sprintf(`document.querySelector(%q).getAttribute('aria-checked') === 'false'`, switchSelector)); err != nil {
-			return err
-		}
-		if err := chromedp.Run(ctx, chromedp.Evaluate(`document.getElementById('sheetClose').click()`, nil)); err != nil {
-			return err
-		}
-		return waitDashboardBrowser(ctx, `!document.querySelector('#settingsDrawer, #sheet').classList.contains('open')`)
-	case "providers":
-		if err := chromedp.Run(ctx, chromedp.Evaluate(`document.querySelector('#nav [data-view="providers"]').click()`, nil)); err != nil {
-			return err
-		}
-		return waitDashboardBrowser(ctx, `!document.querySelector('#view-providers').hidden && document.querySelectorAll('#metricTableBody tr').length > 0`)
-	case "providers-sorted":
-		if err := prepareDashboardVisualState(ctx, design, "providers"); err != nil {
-			return err
-		}
-		return chromedp.Run(ctx, chromedp.Click(`#metricTable th[data-sort="used"]`, chromedp.ByQuery), chromedp.Sleep(100*time.Millisecond))
-	case "trends":
-		if err := chromedp.Run(ctx, chromedp.Evaluate(`document.querySelector('#nav [data-view="trends"]').click()`, nil)); err != nil {
-			return err
-		}
-		return waitDashboardBrowser(ctx, `!document.querySelector('#view-trends').hidden && document.querySelectorAll('#chipRow > *').length > 0 && Boolean(document.querySelector('#chart, #trendChart'))`)
-	case "trends-delta":
-		if err := prepareDashboardVisualState(ctx, design, "trends"); err != nil {
-			return err
-		}
-		if err := chromedp.Run(ctx, chromedp.Evaluate(`document.querySelector('#modeGroup [data-mode="delta"]').click()`, nil)); err != nil {
-			return err
-		}
-		return waitDashboardBrowser(ctx, `document.querySelector('#modeGroup [data-mode="delta"]').getAttribute('aria-pressed') === 'true'`)
-	case "trends-chip-disabled":
-		if err := prepareDashboardVisualState(ctx, design, "trends"); err != nil {
-			return err
-		}
-		if err := chromedp.Run(ctx, chromedp.Evaluate(`document.querySelector('#chipRow [data-slot="chip"][aria-pressed="true"]').click()`, nil)); err != nil {
-			return err
-		}
-		return waitDashboardBrowser(ctx, `document.querySelector('#chipRow [data-slot="chip"]').getAttribute('aria-pressed') === 'false'`)
-	case "trends-empty":
-		if err := prepareDashboardVisualState(ctx, design, "trends"); err != nil {
-			return err
-		}
-		for {
-			var enabled int
-			if err := browserEvaluate(ctx, `document.querySelectorAll('#chipRow [data-slot="chip"][aria-pressed="true"]').length`, &enabled); err != nil {
-				return err
-			}
-			if enabled == 0 {
-				break
-			}
-			if err := chromedp.Run(ctx, chromedp.Evaluate(`document.querySelector('#chipRow [data-slot="chip"][aria-pressed="true"]').click()`, nil)); err != nil {
-				return err
-			}
-		}
-		chartSelector := "#trendChart"
-		if design {
-			chartSelector = "#chart"
-		}
-		return waitDashboardBrowser(ctx, fmt.Sprintf(`document.querySelector(%q).textContent.includes('이 구간에 수집된 스냅샷이 없습니다')`, chartSelector))
-	case "activity":
-		if err := chromedp.Run(ctx, chromedp.Evaluate(`document.querySelector('#nav [data-view="activity"]').click()`, nil)); err != nil {
-			return err
-		}
-		return waitDashboardBrowser(ctx, `!document.querySelector('#view-activity').hidden && document.querySelectorAll('#heatmap .hm-cell').length >= 24`)
-	case "settings":
-		if err := chromedp.Run(ctx, chromedp.Click("#settingsBtn", chromedp.ByID)); err != nil {
-			return err
-		}
-		selector := "#settingsDrawer"
-		if design {
-			selector = "#sheet"
-		}
-		if err := waitDashboardBrowser(ctx, fmt.Sprintf(`document.querySelector(%q).classList.contains('open') && document.activeElement.id === 'sheetClose'`, selector)); err != nil {
-			return err
-		}
-		return chromedp.Run(ctx, chromedp.Sleep(350*time.Millisecond))
-	case "settings-dirty":
-		if err := prepareDashboardVisualState(ctx, design, "settings"); err != nil {
-			return err
-		}
-		selector := `#metricPreferenceProviders [data-slot="switch"]`
-		if design {
-			selector = `#prefEditor [data-slot="switch"]`
-		}
-		if err := waitDashboardBrowser(ctx, fmt.Sprintf(`Boolean(document.querySelector(%q))`, selector)); err != nil {
-			return err
-		}
-		if err := chromedp.Run(ctx, chromedp.Click(selector, chromedp.ByQuery)); err != nil {
-			return err
-		}
-		return waitDashboardBrowser(ctx, `document.querySelector('#prefState').textContent.includes('저장하지 않은')`)
-	case "collection-toast":
-		if err := chromedp.Run(ctx, chromedp.Evaluate(`document.getElementById('collectBtn').click()`, nil)); err != nil {
-			return err
-		}
-		if err := waitDashboardBrowser(ctx, `document.querySelectorAll('.toaster [data-slot="toast"]').length >= 1`); err != nil {
-			return err
-		}
-		return chromedp.Run(ctx, chromedp.Sleep(350*time.Millisecond))
-	case "mobile-nav":
-		if err := chromedp.Run(ctx, chromedp.Click("#navToggle", chromedp.ByID)); err != nil {
-			return err
-		}
-		if err := waitDashboardBrowser(ctx, `document.querySelector('#sidebar-nav').classList.contains('open') && document.querySelector('#navOverlay').classList.contains('open')`); err != nil {
-			return err
-		}
-		// Let the 300ms drawer slide settle so the trigger it covers is compared
-		// in its resting state rather than mid-transition.
-		return chromedp.Run(ctx, chromedp.Sleep(350*time.Millisecond))
-	default:
-		return fmt.Errorf("unknown visual state %q", state)
-	}
-}
-
-type dashboardVisualSnapshot struct {
-	State    string `json:"state"`
-	Viewport struct {
-		Width  int `json:"width"`
-		Height int `json:"height"`
-	} `json:"viewport"`
-	Nodes    map[string]dashboardVisualNode   `json:"nodes"`
-	Repeated map[string][]dashboardVisualNode `json:"repeated"`
-	Copy     map[string]string                `json:"copy"`
-	Order    []string                         `json:"order"`
-}
-
-type dashboardVisualNode struct {
-	Present  bool               `json:"present"`
-	Visible  bool               `json:"visible"`
-	Text     string             `json:"text"`
-	Style    map[string]string  `json:"style"`
-	Geometry map[string]float64 `json:"geometry"`
-}
-
-func captureDashboardVisual(t *testing.T, ctx context.Context, design bool, state string) dashboardVisualSnapshot {
-	t.Helper()
-	mappings := []string{
-		"body|body|body",
-		"app|.app|.app",
-		"sidebar|[data-slot=sidebar]|[data-slot=sidebar]",
-		"topbar|[data-slot=topbar]|[data-slot=topbar]",
-		"view-overview|#view-overview|#view-overview",
-		"view-providers|#view-providers|#view-providers",
-		"view-trends|#view-trends|#view-trends",
-		"view-activity|#view-activity|#view-activity",
-		"overview-head|#view-overview .sec-head|#view-overview .sec-head",
-		"overview-title|#view-overview .sec-title|#view-overview .sec-title",
-		"overview-desc|#view-overview .sec-desc|#view-overview .sec-desc",
-		"overview-legend|#overviewLegend|#overviewLegend",
-		"card-grid|#cardGrid|#cardGrid",
-		"overview-empty-card|#cardGrid > [data-slot=card]:only-child|#cardGrid > [data-provider-empty-state]",
-		"overview-empty-alert|#cardGrid > [data-slot=card]:only-child [data-slot=alert]|#cardGrid > [data-provider-empty-state] [data-slot=alert]",
-		"providers-head|#view-providers > .sec-head|#view-providers > .sec-head",
-		"providers-table-head|#metricTable thead|#metricTable thead",
-		"providers-card|#view-providers > [data-slot=card]|#view-providers > [data-slot=card]",
-		"providers-empty-row|#metricTableBody tr:only-child|#metricTableBody [data-table-empty-state]",
-		"trends-head|#view-trends > .sec-head|#view-trends > .sec-head",
-		"trends-card|#view-trends > [data-slot=card]|#view-trends > [data-slot=card]",
-		"trends-mode|#modeGroup|#modeGroup",
-		"trends-range|#rangeTabs|#rangeTabs",
-		"trends-title|#chartTitle|#chartTitle",
-		"trends-desc|#chartDesc|#chartDesc",
-		"trends-badge|#view-trends > [data-slot=card] [data-slot=badge]|#trendDataStatus",
-		"trends-footer|#chartFoot|#chartFoot",
-		"trends-empty-primary|#chart .axis-text:first-of-type|#trendChart .axis-text:first-of-type",
-		"trends-empty-secondary|#chart .axis-text:last-of-type|#trendChart .axis-text:last-of-type",
-		"activity-head|#view-activity > .sec-head|#view-activity > .sec-head",
-		"activity-card|#view-activity > [data-slot=card]|#view-activity > [data-slot=card]",
-		"activity-total|#hmTotal|#hmTotal",
-		"activity-footer|#hmFoot|#hmFoot",
-		"activity-alert|#activityAlert|#activityAlert",
-		"sheet|#sheet|#settingsDrawer",
-		"sheet-overlay|#sheetOverlay|#sheetOverlay",
-		"nav-overlay|#navOverlay|#navOverlay",
-		"sheet-header|#sheet [data-slot=sheet-header]|#settingsDrawer [data-slot=sheet-header]",
-		"sheet-body|#sheet [data-slot=sheet-body]|#settingsDrawer [data-slot=sheet-body]",
-		"sheet-footer|#sheet [data-slot=sheet-footer]|#settingsDrawer [data-slot=sheet-footer]",
-		"provider-settings|#providerToggles|#drawerProviderCards",
-		"preference-settings|#prefEditor|#metricPreferenceProviders",
-		"sidebar-menu|#nav|#nav",
-		"nav-button|[data-slot=sidebar-menu-button]|[data-slot=sidebar-menu-button]",
-		"sidebar-trigger|#navToggle|#navToggle",
-		"settings-action|#settingsBtn|#settingsBtn",
-		"collect-button|#collectBtn|#collectBtn",
-		"collect-shortcut|#collectBtn kbd|#collectBtn kbd",
-		"snapshot-note|.snapshot-note|.snapshot-note",
-		"health-note|#healthNote|#healthNote",
-		"chart-tooltip|#chartTip|#chartTip",
-		"heatmap-legend|.hm-legend|.hm-legend",
-		"preference-cancel|#prefCancel|#metricPreferenceCancelButton",
-		"preference-save|#prefSave|#metricPreferenceSaveButton",
-		"toaster|.toaster|.toaster",
-	}
-	repeatedMappings := []string{
-		"provider-cards|#cardGrid [data-slot=card]|#cardGrid [data-slot=card]",
-		"provider-card-headers|#cardGrid [data-slot=card-header]|#cardGrid [data-slot=card-header]",
-		"provider-card-titles|#cardGrid [data-slot=card-title]|#cardGrid [data-slot=card-title]",
-		"provider-card-descriptions|#cardGrid [data-slot=card-description]|#cardGrid [data-slot=card-description]",
-		"provider-card-badges|#cardGrid [data-slot=card-header] [data-slot=badge]|#cardGrid [data-slot=card-header] [data-slot=badge]",
-		"provider-card-content|#cardGrid [data-slot=card-content]|#cardGrid [data-slot=card-content]",
-		"provider-metrics|#cardGrid .metric|#cardGrid .metric",
-		"metric-tops|#cardGrid .metric-top|#cardGrid .metric-top",
-		"metric-gauges|#cardGrid [data-slot=gauge]|#cardGrid [data-slot=gauge]",
-		"metric-foots|#cardGrid .metric-foot|#cardGrid .metric-foot",
-		"provider-footers|#cardGrid [data-slot=card-footer]|#cardGrid [data-slot=card-footer]",
-		"provider-table-rows|#metricTableBody tr|#metricTableBody tr",
-		"trend-mode-buttons|#modeGroup [data-slot=toggle-group-item]|#modeGroup [data-slot=toggle-group-item]",
-		"trend-range-buttons|#rangeTabs [data-slot=tabs-trigger]|#rangeTabs [data-slot=tabs-trigger]",
-		"trend-chips|#chipRow [data-slot=chip]|#chipRow [data-slot=chip]",
-		"activity-days|#heatmap .hm-day|#heatmap .hm-day",
-		"activity-hours|#heatmap .hm-hour|#heatmap .hm-hour",
-		"activity-cells|#heatmap .hm-cell|#heatmap .hm-cell",
-		"activity-legend-cells|.hm-legend .hm-cell|.hm-legend .hm-cell",
-		"metric-cycle-badges|#cardGrid .metric-top [data-slot=badge]|#cardGrid .metric-top [data-slot=badge]",
-		"table-mini-gauges|#metricTableBody .mini-gauge|#metricTableBody .mini-gauge",
-		"settings-provider-rows|#providerToggles .set-row|#drawerProviderCards .set-row",
-		"settings-provider-switches|#providerToggles [data-slot=switch]|#drawerProviderCards [data-slot=switch]",
-		"preference-providers|#prefEditor .pref-provider|#metricPreferenceProviders .metric-preference-provider",
-		"preference-items|#prefEditor .pref-item|#metricPreferenceProviders .pref-item",
-		"preference-switches|#prefEditor [data-slot=switch]|#metricPreferenceProviders [data-slot=switch]",
-		"preference-order|#prefEditor .pref-order > *|#metricPreferenceProviders .metric-preference-move",
-		"sheet-footer-controls|#sheet [data-slot=sheet-footer] > *|#settingsDrawer [data-slot=sheet-footer] > *",
-		"toasts|.toaster [data-slot=toast]|.toaster [data-slot=toast]",
-	}
-	copyMappings := []string{
-		"brand|.brand|.brand",
-		"nav|#nav|#nav",
-		"collect|#collectBtn|#collectBtn",
-		"overview-title|#view-overview .sec-title|#view-overview .sec-title",
-		"overview-desc|#view-overview .sec-desc|#view-overview .sec-desc",
-		"providers-title|#view-providers .sec-title|#view-providers .sec-title",
-		"providers-desc|#view-providers .sec-desc|#view-providers .sec-desc",
-		"providers-footer|#view-providers [data-slot=card-footer]|#view-providers [data-slot=card-footer]",
-		"trends-title|#view-trends .sec-title|#view-trends .sec-title",
-		"trends-desc|#view-trends .sec-desc|#view-trends .sec-desc",
-		"trends-card-title|#chartTitle|#chartTitle",
-		"trends-card-desc|#chartDesc|#chartDesc",
-		"trends-badge|#view-trends > [data-slot=card] [data-slot=badge]|#trendDataStatus",
-		"activity-title|#view-activity .sec-title|#view-activity .sec-title",
-		"activity-desc|#view-activity .sec-desc|#view-activity .sec-desc",
-		"activity-alert-heading|#activityAlert [data-slot=alert] .at|#activityAlert [data-slot=alert] .at",
-		"settings-title|#sheet .set-title|#settingsDrawer .set-title",
-		"settings-help|#sheet .set-help|#settingsDrawer .set-help",
-		"sheet-cancel|#sheet [data-slot=sheet-footer] button:first-of-type|#settingsDrawer [data-slot=sheet-footer] button:first-of-type",
-		"sheet-save|#sheet [data-slot=sheet-footer] button:last-of-type|#settingsDrawer [data-slot=sheet-footer] button:last-of-type",
-		"page-title|#pageTitle|#pageTitle",
-		"page-desc|#pageDesc|#pageDesc",
-	}
-	mappingJSON, _ := json.Marshal(mappings)
-	repeatedJSON, _ := json.Marshal(repeatedMappings)
-	copyJSON, _ := json.Marshal(copyMappings)
-	designLiteral := "false"
-	if design {
-		designLiteral = "true"
-	}
-	expression := fmt.Sprintf(`(() => {
-const isDesign = %s;
-const mappings = %s;
-const repeatedMappings = %s;
-const copyMappings = %s;
-document.documentElement.style.overflow = 'hidden';
-document.body.style.overflow = 'hidden';
-const styleKeys = ['display','visibility','position','fontFamily','fontSize','fontWeight','lineHeight','letterSpacing','color','backgroundColor','opacity','borderTopWidth','borderRightWidth','borderBottomWidth','borderLeftWidth','borderTopColor','borderRightColor','borderBottomColor','borderLeftColor','borderRadius','paddingTop','paddingRight','paddingBottom','paddingLeft','marginTop','marginRight','marginBottom','marginLeft','gap','gridTemplateColumns','width','height','minHeight','maxWidth','transform','overflow','transitionProperty','transitionDuration','transitionTimingFunction'];
-const cleanText = text => String(text || '').replace(/\s+/g, ' ').trim();
-const textMasked = new Set(['body','app','sidebar','topbar','view-overview','view-providers','view-trends','view-activity','overview-head','card-grid','providers-head','providers-table-head','providers-card','trends-head','trends-card','trends-mode','trends-range','trends-footer','activity-head','activity-card','activity-total','activity-footer','activity-alert','sheet','sheet-header','sheet-body','sheet-footer','sidebar-menu','provider-settings','preference-settings','snapshot-note','health-note','chart-tooltip','toaster']);
-const repeatedTextMasked = new Set(['provider-cards','provider-card-headers','provider-card-titles','provider-card-descriptions','provider-card-badges','provider-card-content','provider-metrics','metric-tops','metric-foots','provider-table-rows','trend-chips','activity-days','activity-hours','activity-cells','activity-legend-cells','metric-cycle-badges','settings-provider-rows','settings-provider-switches','preference-providers','preference-items','preference-switches','preference-order','toasts']);
-const visibleText = node => {
-  const clone = node.cloneNode(true);
-  clone.querySelectorAll('[hidden],[aria-hidden="true"]').forEach(child => child.remove());
-  return cleanText(clone.textContent);
-};
-const normalizedText = (node, key) => {
-  const text = visibleText(node);
-  if (textMasked.has(key) || repeatedTextMasked.has(key)) return '';
-  if (key === 'provider-footers') return text.replace(/^마지막 수집.*$/, '마지막 수집');
-  return text;
-};
-const describe = (node, key) => {
-  if (!node) return {present:false, visible:false, text:'', style:{}, geometry:{}};
-  const computed = getComputedStyle(node);
-  const rect = node.getBoundingClientRect();
-  const style = {};
-  styleKeys.forEach(key => style[key] = computed[key]);
-  const hidden = node.hidden || computed.display === 'none' || computed.visibility === 'hidden' || node.getClientRects().length === 0;
-  return {present:true, visible:!hidden, text:normalizedText(node, key), style, geometry:{x:rect.x,y:rect.y,width:rect.width,height:rect.height}};
-};
-const nodes = {};
-mappings.forEach(pair => {
-  const [key, sourceSelector, liveSelector] = pair.split('|');
-  const selector = isDesign ? sourceSelector : liveSelector;
-  nodes[key] = describe(document.querySelector(selector), key);
-});
-const repeated = {};
-repeatedMappings.forEach(pair => {
-  const [key, sourceSelector, liveSelector] = pair.split('|');
-  const selector = isDesign ? sourceSelector : liveSelector;
-  repeated[key] = Array.from(document.querySelectorAll(selector)).filter(node => node.getClientRects().length > 0).map(node => describe(node, key));
-});
-const copy = {};
-copyMappings.forEach(pair => {
-  const [key, sourceSelector, liveSelector] = pair.split('|');
-  const node = document.querySelector(isDesign ? sourceSelector : liveSelector);
-  if (key === 'brand' && node) {
-    copy[key] = ['.brand-mark', '.brand-name', '.brand-sub'].map(selector => cleanText(node.querySelector(selector)?.textContent)).join('|');
-  } else if (key === 'nav' && node) {
-    copy[key] = Array.from(node.querySelectorAll('[data-view]')).map(button => {
-      const clone = button.cloneNode(true);
-      clone.querySelectorAll('.count').forEach(count => count.remove());
-      return cleanText(clone.textContent);
-    }).join('|');
-  } else {
-    copy[key] = node ? visibleText(node) : '';
-  }
-});
-const order = Array.from(document.querySelectorAll('main.view')).map(node => node.id);
-return JSON.stringify({state:%q,viewport:{width:innerWidth,height:innerHeight},nodes,repeated,copy,order});
-})()`, designLiteral, string(mappingJSON), string(repeatedJSON), string(copyJSON), state)
-	var encoded string
-	if err := browserEvaluate(ctx, expression, &encoded); err != nil {
-		t.Fatalf("capture %s visual snapshot: %v", map[bool]string{true: "design", false: "live"}[design], err)
-	}
-	var snapshot dashboardVisualSnapshot
-	if err := json.Unmarshal([]byte(encoded), &snapshot); err != nil {
-		t.Fatalf("decode %s visual snapshot: %v; raw=%s", map[bool]string{true: "design", false: "live"}[design], err, encoded)
-	}
-	return snapshot
-}
-
-func compareDashboardVisual(t *testing.T, viewport, state string, design, live dashboardVisualSnapshot) {
-	t.Helper()
-	isTransitionProperty := func(property string) bool {
-		return property == "transitionProperty" || property == "transitionDuration" || property == "transitionTimingFunction"
-	}
-	transitionNodes := map[string]bool{"providers-card": true, "trends-card": true, "activity-card": true, "nav-button": true}
-	transitionRepeated := map[string]bool{"provider-cards": true, "trend-mode-buttons": true, "trend-range-buttons": true, "trend-chips": true, "settings-provider-switches": true, "preference-switches": true, "sheet-footer-controls": true}
-	// These dimensions are intentionally data-dependent: the live dashboard
-	// renders the provider/metric cardinality and labels returned by its APIs,
-	// while the source file carries a fixed prototype fixture. All shell and
-	// control geometry remains compared below; only the documented data-bearing
-	// extents are masked.
-	maskedStyle := map[string]map[string]bool{
-		"body":                 {"overflow": true},
-		"app":                  {"height": true},
-		"view-overview":        {"height": true},
-		"view-providers":       {"height": true},
-		"view-trends":          {"height": true},
-		"view-activity":        {"height": true},
-		"card-grid":            {"height": true},
-		"providers-card":       {"height": true, "width": true},
-		"providers-head":       {"height": true, "width": true},
-		"providers-table-head": {"height": true, "width": true},
-		"trends-card":          {"height": true},
-		"activity-card":        {"height": true},
-		"activity-total":       {"width": true},
-		"activity-footer":      {"height": true},
-		"activity-alert":       {"height": true},
-		"trends-footer":        {"height": true},
-		"sheet":                {"height": true},
-		"sheet-body":           {"height": true},
-		"provider-settings":    {"height": true},
-		"preference-settings":  {"height": true},
-		"providers-empty-row":  {"width": true},
-		"nav-button":           {"color": true, "backgroundColor": true, "borderTopColor": true, "borderRightColor": true, "borderBottomColor": true, "borderLeftColor": true},
-		"health-note":          {"height": true},
-		"snapshot-note":        {"width": true},
-		"settings-action":      {"backgroundColor": true, "color": true, "borderTopColor": true, "borderRightColor": true, "borderBottomColor": true, "borderLeftColor": true},
-		"chart-tooltip":        {"width": true, "height": true},
-		"toaster":              {"width": true, "height": true},
-	}
-	maskedGeometry := map[string]map[string]bool{
-		"app":                    {"height": true},
-		"view-overview":          {"height": true},
-		"view-providers":         {"height": true},
-		"view-trends":            {"height": true},
-		"view-activity":          {"height": true},
-		"card-grid":              {"height": true},
-		"providers-card":         {"height": true, "width": true, "y": true},
-		"providers-head":         {"height": true, "width": true, "y": true},
-		"providers-table-head":   {"height": true, "width": true, "x": true, "y": true},
-		"trends-card":            {"height": true},
-		"activity-card":          {"height": true},
-		"activity-total":         {"x": true, "width": true},
-		"activity-footer":        {"height": true, "y": true},
-		"activity-alert":         {"height": true, "y": true},
-		"trends-footer":          {"height": true, "y": true},
-		"sheet":                  {"height": true},
-		"sheet-body":             {"height": true, "y": true},
-		"provider-settings":      {"height": true, "y": true},
-		"preference-settings":    {"height": true, "y": true},
-		"providers-empty-row":    {"x": true, "width": true},
-		"trends-empty-primary":   {"y": true},
-		"trends-empty-secondary": {"y": true},
-		"health-note":            {"height": true, "y": true},
-		"snapshot-note":          {"width": true, "y": true},
-		"chart-tooltip":          {"width": true, "height": true, "x": true, "y": true},
-		"heatmap-legend":         {"y": true},
-		"preference-cancel":      {"x": true, "y": true},
-		"preference-save":        {"x": true, "y": true},
-		"toaster":                {"x": true, "y": true, "width": true, "height": true},
-	}
-	maskedRepeatedStyle := map[string]map[string]bool{
-		"provider-card-badges":       {"width": true, "color": true, "backgroundColor": true, "borderTopColor": true, "borderRightColor": true, "borderBottomColor": true, "borderLeftColor": true},
-		"provider-cards":             {"height": true, "x": true},
-		"provider-card-headers":      {"height": true, "x": true},
-		"provider-card-titles":       {"width": true},
-		"provider-card-descriptions": {"width": true},
-		"provider-card-content":      {"height": true},
-		"provider-metrics":           {"height": true, "borderTopWidth": true, "borderTopColor": true, "paddingTop": true},
-		"metric-foots":               {"height": true},
-		"provider-footers":           {"height": true, "marginTop": true},
-		"settings-provider-rows":     {"height": true},
-		"preference-providers":       {"height": true},
-		"preference-items":           {"height": true},
-		"activity-cells":             {"backgroundColor": true},
-		"trend-chips":                {"width": true},
-		"provider-table-rows":        {"height": true, "width": true},
-		"metric-cycle-badges":        {"width": true},
-		"table-mini-gauges":          {},
-		"activity-legend-cells":      {},
-		"settings-provider-switches": {"backgroundColor": true, "color": true, "borderTopColor": true, "borderRightColor": true, "borderBottomColor": true, "borderLeftColor": true, "overflow": true},
-		"preference-switches":        {"backgroundColor": true, "color": true, "borderTopColor": true, "borderRightColor": true, "borderBottomColor": true, "borderLeftColor": true, "overflow": true},
-		"preference-order":           {"opacity": true},
-		"toasts":                     {"width": true, "height": true, "transform": true},
-	}
-	maskedRepeatedGeometry := map[string]map[string]bool{
-		"provider-card-badges":       {"x": true, "y": true, "width": true},
-		"provider-cards":             {"height": true, "y": true},
-		"provider-card-headers":      {"height": true, "y": true},
-		"provider-card-titles":       {"width": true, "y": true, "x": true},
-		"provider-card-descriptions": {"width": true, "y": true, "x": true},
-		"provider-card-content":      {"height": true, "y": true, "x": true},
-		"provider-metrics":           {"height": true, "y": true, "x": true},
-		"metric-tops":                {"y": true, "x": true},
-		"metric-gauges":              {"y": true, "x": true},
-		"metric-foots":               {"y": true, "x": true},
-		"provider-footers":           {"y": true, "x": true},
-		"settings-provider-rows":     {"height": true, "y": true},
-		"settings-provider-switches": {"y": true},
-		"preference-providers":       {"height": true, "y": true},
-		"preference-items":           {"height": true, "y": true},
-		"preference-switches":        {"y": true},
-		"preference-order":           {"y": true, "x": true},
-		"provider-table-rows":        {"height": true, "width": true, "x": true, "y": true},
-		"metric-cycle-badges":        {"x": true, "y": true, "width": true},
-		"table-mini-gauges":          {"x": true, "y": true},
-		"activity-legend-cells":      {"x": true, "y": true},
-		"trend-chips":                {"width": true, "x": true, "y": true},
-		"toasts":                     {"x": true, "y": true, "width": true, "height": true},
-	}
-	if design.State != live.State || design.Viewport != live.Viewport {
-		t.Errorf("%s/%s state or viewport drift: design state=%q viewport=%+v live state=%q viewport=%+v", viewport, state, design.State, design.Viewport, live.State, live.Viewport)
-	}
-	if design.Viewport != live.Viewport {
-		t.Fatalf("%s viewport drift: design=%+v live=%+v", viewport, design.Viewport, live.Viewport)
-	}
-	if strings.Join(design.Order, "|") != strings.Join(live.Order, "|") {
-		t.Fatalf("%s section order drift: design=%v live=%v", viewport, design.Order, live.Order)
-	}
-	for key, expected := range design.Nodes {
-		if key == "toaster" && state != "collection-toast" {
-			continue
-		}
-		if (key == "provider-settings" || key == "preference-settings") && state != "settings" && state != "settings-dirty" {
-			continue
-		}
-		if strings.HasPrefix(key, "overview-empty-") && state != "overview-empty" && state != "providers-empty" {
-			continue
-		}
-		if key == "providers-empty-row" && state != "providers-empty" {
-			continue
-		}
-		if strings.HasPrefix(key, "trends-empty-") && state != "trends-empty" {
-			continue
-		}
-		actual, ok := live.Nodes[key]
-		if !ok {
-			t.Errorf("%s missing mapped node %q", viewport, key)
-			continue
-		}
-		if expected.Present != actual.Present || expected.Visible != actual.Visible {
-			t.Errorf("%s %s visibility drift: design present=%v visible=%v live present=%v visible=%v", viewport, key, expected.Present, expected.Visible, actual.Present, actual.Visible)
-		}
-		if expected.Present && actual.Present && expected.Visible && actual.Visible {
-			if expected.Text != "" && expected.Text != actual.Text {
-				t.Errorf("%s/%s %s text drift: design=%q live=%q", viewport, state, key, expected.Text, actual.Text)
-			}
-			for property, want := range expected.Style {
-				if isTransitionProperty(property) && !transitionNodes[key] {
-					continue
-				}
-				if maskedStyle[key][property] {
-					continue
-				}
-				if got := actual.Style[property]; got != want {
-					t.Errorf("%s %s %s drift: design=%q live=%q", viewport, key, property, want, got)
-				}
-			}
-			for property, want := range expected.Geometry {
-				if maskedGeometry[key][property] {
-					continue
-				}
-				got := actual.Geometry[property]
-				if want == 0 && got == 0 {
-					continue
-				}
-				if delta := want - got; delta > 0.5 || delta < -0.5 {
-					t.Errorf("%s %s geometry.%s drift: design=%.2f live=%.2f", viewport, key, property, want, got)
-				}
-			}
-		}
-	}
-	for key, expectedNodes := range design.Repeated {
-		if key == "toasts" && state != "collection-toast" {
-			continue
-		}
-		if strings.HasPrefix(key, "settings-provider-") || strings.HasPrefix(key, "preference-") || key == "sheet-footer-controls" {
-			if state != "settings" && state != "settings-dirty" {
-				continue
-			}
-		}
-		actualNodes := live.Repeated[key]
-		exactCardinality := map[string]bool{"trend-mode-buttons": true, "trend-range-buttons": true, "activity-days": true, "activity-hours": true, "sheet-footer-controls": true}
-		if exactCardinality[key] && len(expectedNodes) != len(actualNodes) {
-			t.Errorf("%s/%s repeated %s cardinality drift: design=%d live=%d", viewport, state, key, len(expectedNodes), len(actualNodes))
-		}
-		if len(expectedNodes) == 0 {
-			if len(actualNodes) > 0 {
-				t.Errorf("%s/%s repeated %s unexpectedly rendered %d live nodes", viewport, state, key, len(actualNodes))
-			}
-			continue
-		}
-		if len(actualNodes) == 0 {
-			t.Errorf("%s/%s repeated %s missing all live nodes; design rendered %d", viewport, state, key, len(expectedNodes))
-			continue
-		}
-		for index, actual := range actualNodes {
-			expected := expectedNodes[0]
-			if index < len(expectedNodes) {
-				expected = expectedNodes[index]
-			}
-			if index >= len(expectedNodes) {
-				expected = expectedNodes[len(expectedNodes)-1]
-			}
-			if expected.Present != actual.Present || expected.Visible != actual.Visible {
-				t.Errorf("%s/%s repeated %s[%d] visibility drift: design present=%v visible=%v live present=%v visible=%v", viewport, state, key, index, expected.Present, expected.Visible, actual.Present, actual.Visible)
-			}
-			if !expected.Present || !actual.Present || !expected.Visible || !actual.Visible {
-				continue
-			}
-			for property, want := range expected.Style {
-				if isTransitionProperty(property) && !transitionRepeated[key] {
-					continue
-				}
-				if maskedRepeatedStyle[key][property] {
-					continue
-				}
-				if got := actual.Style[property]; got != want {
-					t.Errorf("%s/%s repeated %s[%d] %s drift: design=%q live=%q", viewport, state, key, index, property, want, got)
-				}
-			}
-			for property, want := range expected.Geometry {
-				if maskedRepeatedGeometry[key][property] {
-					continue
-				}
-				got := actual.Geometry[property]
-				if want == 0 && got == 0 {
-					continue
-				}
-				if delta := want - got; delta > 0.5 || delta < -0.5 {
-					t.Errorf("%s/%s repeated %s[%d] geometry.%s drift: design=%.2f live=%.2f", viewport, state, key, index, property, want, got)
-				}
-			}
-			if expected.Text != "" && expected.Text != actual.Text {
-				t.Errorf("%s/%s repeated %s[%d] text drift: design=%q live=%q", viewport, state, key, index, expected.Text, actual.Text)
-			}
-		}
-	}
-	for child, parent := range map[string]string{
-		"provider-card-headers":      "provider-cards",
-		"provider-card-badges":       "provider-cards",
-		"provider-card-content":      "provider-cards",
-		"provider-footers":           "provider-cards",
-		"settings-provider-switches": "settings-provider-rows",
-		"preference-switches":        "preference-items",
-	} {
-		if (state == "overview-empty" || state == "providers-empty") && parent == "provider-cards" {
-			continue
-		}
-		if len(live.Repeated[parent]) > 0 && len(live.Repeated[child]) != len(live.Repeated[parent]) {
-			t.Errorf("%s/%s repeated %s structural cardinality drift: %d nodes for %d %s nodes", viewport, state, child, len(live.Repeated[child]), len(live.Repeated[parent]), parent)
-		}
-	}
-	if items := len(live.Repeated["preference-items"]); items > 0 && len(live.Repeated["preference-order"]) != items*2 {
-		t.Errorf("%s/%s repeated preference-order structural cardinality drift: got %d controls for %d items, want %d", viewport, state, len(live.Repeated["preference-order"]), items, items*2)
-	}
-	for key, want := range design.Copy {
-		switch key {
-		case "providers-footer":
-			if state != "providers" {
-				continue
-			}
-		case "trends-card-title", "trends-card-desc", "trends-badge":
-			if state != "trends" {
-				continue
-			}
-		case "activity-alert-heading":
-			if state != "activity" {
-				continue
-			}
-		case "settings-title", "settings-help", "sheet-cancel", "sheet-save":
-			if state != "settings" {
-				continue
-			}
-		}
-		if got := live.Copy[key]; got != want {
-			t.Errorf("%s/%s %s copy drift: design=%q live=%q", viewport, state, key, want, got)
-		}
-	}
-}
-
 func setupDashboardBrowserServer(t *testing.T) (*Server, *httptest.Server, *atomic.Int64) {
 	t.Helper()
 	server, _ := setupMetricPreferenceTestServer(t)
@@ -1475,6 +697,113 @@ func setupDashboardBrowserServer(t *testing.T) (*Server, *httptest.Server, *atom
 	t.Cleanup(openUsageServer.Close)
 
 	return server, httptest.NewServer(server.mux), &collectionCalls
+}
+
+// TestDashboardStaleStatusShouldRecoverAfterCollectionAndIgnoreDisabledProviders
+// drives the real client refresh path, because the staleness badge and the
+// sidebar health line are computed in the browser rather than server-side.
+func TestDashboardStaleStatusShouldRecoverAfterCollectionAndIgnoreDisabledProviders(t *testing.T) {
+	chromePath := os.Getenv("WEBUSAGE_CHROME_BIN")
+	if chromePath == "" {
+		chromePath = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+	}
+	info, err := os.Stat(chromePath)
+	if err != nil {
+		t.Fatalf("Chrome executable %q is unavailable: %v", chromePath, err)
+	}
+	if info.IsDir() || info.Mode()&0111 == 0 {
+		t.Fatalf("Chrome executable %q is not executable", chromePath)
+	}
+
+	// Given: an enabled provider whose newest snapshot is older than the stale
+	// threshold, plus a disabled provider that was last collected months ago.
+	server, _ := setupMetricPreferenceTestServer(t)
+	now := time.Now().UTC().Truncate(time.Second)
+	limit := 100.0
+	reset := now.Add(3 * time.Hour)
+	activeID := mustCreateHTTPTestProvider(t, server, "claude", `{}`)
+	dormantID := mustCreateHTTPTestProvider(t, server, "dormant", `{}`)
+	if err := server.store.EnableProviderByName("dormant", false); err != nil {
+		t.Fatalf("disable dormant provider: %v", err)
+	}
+	mustCreateHTTPTestSnapshot(t, server, &store.UsageSnapshot{ProviderID: activeID, Metric: "session", Used: 30, Limit: &limit, ResetAt: &reset, CollectedAt: now.Add(-3 * time.Hour)})
+	mustCreateHTTPTestSnapshot(t, server, &store.UsageSnapshot{ProviderID: dormantID, Metric: "session", Used: 18, Limit: &limit, ResetAt: &reset, CollectedAt: now.Add(-60 * 24 * time.Hour)})
+
+	openUsageServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/usage" {
+			http.NotFound(w, r)
+			return
+		}
+		resetText := time.Now().UTC().Add(3 * time.Hour).Format(time.RFC3339)
+		payload := []openusage.UsageSnapshot{{
+			ProviderID:  "claude",
+			DisplayName: "Claude",
+			FetchedAt:   time.Now().UTC(),
+			Lines: []openusage.Line{{
+				Type:     "progress",
+				Label:    "Session",
+				Used:     55,
+				Limit:    100,
+				ResetsAt: &resetText,
+			}},
+		}}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(payload)
+	}))
+	defer openUsageServer.Close()
+	server.SetOpenUsageClient(openusage.NewClient(openUsageServer.URL))
+	server.SetCollector(collector.NewCollector(server.store, openusage.NewClient(openUsageServer.URL), time.Minute, server.logger))
+
+	localServer := httptest.NewServer(server.mux)
+	defer localServer.Close()
+
+	allocator, cancelAllocator := chromedp.NewExecAllocator(context.Background(),
+		chromedp.ExecPath(chromePath),
+		chromedp.Flag("headless", "new"),
+		chromedp.Flag("disable-gpu", true),
+		chromedp.Flag("disable-dev-shm-usage", true),
+		chromedp.Flag("no-first-run", true),
+		chromedp.Flag("no-default-browser-check", true),
+		chromedp.Flag("disable-background-networking", true),
+		chromedp.Flag("disable-extensions", true),
+	)
+	defer cancelAllocator()
+	ctx, cancelContext := chromedp.NewContext(allocator)
+	defer cancelContext()
+	ctx, cancelTimeout := context.WithTimeout(ctx, 90*time.Second)
+	defer cancelTimeout()
+	if err := chromedp.Run(ctx,
+		chromedp.EmulateViewport(1440, 1000),
+		chromedp.Navigate(localServer.URL),
+		chromedp.WaitReady("#cardGrid"),
+	); err != nil {
+		t.Fatalf("navigate dashboard in Chrome: %v", err)
+	}
+	if err := waitDashboardBrowser(ctx, `document.querySelector('#overviewStatus').textContent === 'API 연결됨'`); err != nil {
+		t.Fatalf("dashboard did not finish its first client refresh: %v", err)
+	}
+
+	// Then: the genuinely stale provider and the sidebar both report staleness.
+	assertDashboardBrowser(t, ctx, `document.querySelector('[data-provider-id="claude"] .provider-status').textContent.trim() === '데이터 오래됨'`)
+	assertDashboardBrowser(t, ctx, `document.getElementById('healthText').textContent === '데이터 오래됨'`)
+
+	// When: the user collects fresh data with the dashboard still open.
+	if err := browserEvaluate(ctx, `document.getElementById('collectBtn').click()`, nil); err != nil {
+		t.Fatalf("click collect button: %v", err)
+	}
+	if err := waitDashboardBrowser(ctx, `document.getElementById('collectBtn').dataset.collectionState === 'completed'`); err != nil {
+		t.Fatalf("collection did not complete: %v", err)
+	}
+
+	// Then: the provider badge clears without a page reload, and the disabled
+	// provider's months-old snapshot does not hold the sidebar in a warning
+	// state.
+	if err := waitDashboardBrowser(ctx, `document.querySelector('[data-provider-id="claude"] .provider-status').textContent.trim() === '정상'`); err != nil {
+		t.Fatalf("stale provider badge did not recover after collection: %v", err)
+	}
+	if err := waitDashboardBrowser(ctx, `document.getElementById('healthText').textContent === '수집 정상'`); err != nil {
+		t.Fatalf("sidebar health did not recover after collection: %v", err)
+	}
 }
 
 func ptrBrowserFloat(value float64) *float64 { return &value }

@@ -19,6 +19,11 @@ import (
 	"github.com/ClaudeSeo/webusage/internal/store"
 )
 
+// staleUsageThreshold is how long a provider's newest snapshot may age before
+// the dashboard reports its data as stale. The server renders the first paint
+// and the browser re-evaluates it after each refresh, so both read this value.
+const staleUsageThreshold = 2 * time.Hour
+
 // Server manages the HTTP server
 type Server struct {
 	store              *store.Store
@@ -198,16 +203,20 @@ func (s *Server) loadTemplates() error {
 				if v == nil || v.IsZero() {
 					return true
 				}
-				return time.Since(*v) > 2*time.Hour
+				return time.Since(*v) > staleUsageThreshold
 			case time.Time:
 				if v.IsZero() {
 					return true
 				}
-				return time.Since(v) > 2*time.Hour
+				return time.Since(v) > staleUsageThreshold
 			default:
 				return true
 			}
 		},
+		// The dashboard re-evaluates staleness client-side after every refresh,
+		// so the threshold is published instead of duplicated in the template's
+		// script.
+		"staleThresholdSeconds": func() int64 { return int64(staleUsageThreshold / time.Second) },
 		"float64": func(n int64) float64 {
 			return float64(n)
 		},

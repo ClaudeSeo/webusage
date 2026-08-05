@@ -245,7 +245,7 @@ func ProjectMetric(input MetricProjectionInput) MetricProjection {
 		result.CurrentPercent = usagePercent(current.Value, input.Limit)
 	}
 
-	older, newer, ok := latestMetricPacePair(points)
+	older, newer, ok := cyclePaceSpan(points, result.CycleStart)
 	if ok {
 		window := newer.Timestamp.Sub(older.Timestamp)
 		result.ObservationWindow = window
@@ -300,24 +300,56 @@ func latestFiniteMetricSnapshot(points []TrendDataPoint) (TrendDataPoint, bool) 
 	return TrendDataPoint{}, false
 }
 
-// latestMetricPacePair returns the most recent adjacent pair in the current
-// cycle. A decreasing pair is a reset marker and stops the search so pace from
-// a previous cycle cannot leak into the new one.
-func latestMetricPacePair(points []TrendDataPoint) (TrendDataPoint, TrendDataPoint, bool) {
-	for i := len(points) - 1; i > 0; i-- {
-		older, newer := points[i-1], points[i]
-		if older.Timestamp.IsZero() || newer.Timestamp.IsZero() || !newer.Timestamp.After(older.Timestamp) {
+// cyclePaceSpan returns the first and last usable snapshot of the current cycle
+// so pace reflects everything collected since the cycle began instead of only
+// the last collection interval. Measuring the whole cycle is what lets the
+// observation window grow with elapsed time; an adjacent pair would stay as
+// narrow as the collection interval forever and keep every long horizon a weak
+// estimate.
+//
+// The span starts at the later of two independent pieces of evidence for where
+// the cycle began: an observed reset marker (a decreasing value) and the
+// calculated cycle start. Taking the later of the two keeps a missed reset or a
+// long collection gap from stretching the window across a cycle boundary, and
+// keeps a provider's custom reset timestamp from overriding an observed reset.
+func cyclePaceSpan(points []TrendDataPoint, cycleStart *time.Time) (TrendDataPoint, TrendDataPoint, bool) {
+	usable := make([]TrendDataPoint, 0, len(points))
+	for _, point := range points {
+		if point.Timestamp.IsZero() || !metricValueFinite(point.Value) {
 			continue
 		}
-		if !metricValueFinite(older.Value) || !metricValueFinite(newer.Value) {
-			continue
-		}
-		if newer.Value < older.Value {
-			return TrendDataPoint{}, TrendDataPoint{}, false
-		}
-		return older, newer, true
+		usable = append(usable, point)
 	}
-	return TrendDataPoint{}, TrendDataPoint{}, false
+	if len(usable) < 2 {
+		return TrendDataPoint{}, TrendDataPoint{}, false
+	}
+
+	first := 0
+	for i := len(usable) - 1; i > 0; i-- {
+		if usable[i].Value < usable[i-1].Value {
+			first = i
+			break
+		}
+	}
+	if cycleStart != nil {
+		trimmed := first
+		for trimmed < len(usable)-1 && usable[trimmed].Timestamp.Before(*cycleStart) {
+			trimmed++
+		}
+		// A calculated boundary is weaker evidence than a recorded snapshot: a
+		// provider reporting a reset further out than its cycle length puts the
+		// calculated start in the future, which would discard every observation.
+		// Honor it only while it still leaves a measurable span.
+		if trimmed < len(usable)-1 {
+			first = trimmed
+		}
+	}
+
+	older, newer := usable[first], usable[len(usable)-1]
+	if !newer.Timestamp.After(older.Timestamp) {
+		return TrendDataPoint{}, TrendDataPoint{}, false
+	}
+	return older, newer, true
 }
 
 func usagePercent(usage float64, limit *float64) float64 {

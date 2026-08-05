@@ -62,6 +62,7 @@
     const SERIES_COLORS = ['#10a37f', '#0d0d0d', '#f5a623', '#ef4146', '#6956d8', '#3b82f6'];
     const RANGE_WINDOW_MS = { '5h': 5 * 3600000, '24h': 24 * 3600000, '7d': 7 * 86400000, '30d': 30 * 86400000 };
     const UI_STORAGE_KEY = 'webusage.ui.v1';
+    const STALE_THRESHOLD_MS = {{staleThresholdSeconds}} * 1000;
     const state = {
         view: 'overview',
         gaugeMode: 'usage',
@@ -330,6 +331,30 @@
         if (legendCurrent) legendCurrent.textContent = state.gaugeMode === 'usage' ? '현재 사용량' : '현재 남은량';
     }
 
+    // The badge must be rewritten on every refresh, not only when collection
+    // fails: a provider that was stale at first paint has to clear its badge
+    // once fresh data arrives, without a page reload.
+    function applyProviderStatusBadge(status, current) {
+        const failure = current.error || current.collection_error;
+        const collectedAt = current.last_updated ? Date.parse(current.last_updated) : NaN;
+        const stale = !Number.isFinite(collectedAt) || Date.now() - collectedAt > STALE_THRESHOLD_MS;
+        const variant = failure ? 'danger' : stale ? 'warn' : 'ok';
+        const label = failure ? '수집 실패' : stale ? '데이터 오래됨' : '정상';
+        status.className = `badge badge-${variant} provider-status`;
+        status.replaceChildren();
+        if (variant === 'ok') {
+            status.removeAttribute('title');
+            status.textContent = label;
+            return;
+        }
+        const dot = document.createElement('span');
+        dot.className = 'dot';
+        dot.style.background = variant === 'danger' ? 'var(--danger)' : 'var(--warn)';
+        status.append(dot, document.createTextNode(label));
+        if (failure) status.title = sanitizeError(failure);
+        else status.removeAttribute('title');
+    }
+
     function updateCurrentCards(data) {
         state.current = data || {};
         Object.entries(state.current).forEach(([providerName, current]) => {
@@ -338,7 +363,7 @@
             card.dataset.currentUsage = String(current.current_usage ?? 0);
             card.dataset.currentPercent = String(current.usage_percent ?? 0);
             const status = card.querySelector('.provider-status');
-            if (status && (current.error || current.collection_error)) { status.className = 'badge badge-danger provider-status'; status.replaceChildren(); const dot = document.createElement('span'); dot.className = 'dot'; dot.style.background = 'var(--danger)'; status.append(dot, document.createTextNode('수집 실패')); status.title = sanitizeError(current.collection_error || current.error); }
+            if (status) applyProviderStatusBadge(status, current);
             const updated = card.querySelector('.collected-at');
             if (updated && current.last_updated) { updated.textContent = formatDateTime(current.last_updated); updated.dataset.collectedAt = current.last_updated; }
             Object.entries(current.metrics || {}).forEach(([metricName, projection]) => {
@@ -407,8 +432,12 @@
         const dot = document.getElementById('healthDot');
         const text = document.getElementById('healthText');
         if (failed) { dot.style.background = 'var(--danger)'; text.textContent = 'API 연결 실패'; document.getElementById('healthNote').textContent = sanitizeError(failed === true ? '' : failed); return; }
-        const failedProviders = Array.from(document.querySelectorAll('.provider-status')).filter(node => node.classList.contains('badge-danger'));
-        const stale = Array.from(document.querySelectorAll('.provider-status')).some(node => node.classList.contains('badge-warn'));
+        // Disabled provider cards stay in the DOM behind `hidden`, so an old
+        // snapshot from a provider the user turned off must not decide the
+        // overall status.
+        const statuses = Array.from(document.querySelectorAll('.provider-card:not([hidden]) .provider-status'));
+        const failedProviders = statuses.filter(node => node.classList.contains('badge-danger'));
+        const stale = statuses.some(node => node.classList.contains('badge-warn'));
         dot.style.background = failedProviders.length ? 'var(--danger)' : stale ? 'var(--warn)' : 'var(--success)';
         text.textContent = failedProviders.length ? '수집 실패 있음' : stale ? '데이터 오래됨' : '수집 정상';
         document.getElementById('healthNote').textContent = failedProviders.length ? sanitizeError(failedProviders[0].title) : `활성 Provider ${state.providers.filter(provider => provider.enabled).length}개 · OpenUsage + native`;
