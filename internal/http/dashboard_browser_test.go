@@ -806,6 +806,143 @@ func TestDashboardStaleStatusShouldRecoverAfterCollectionAndIgnoreDisabledProvid
 	}
 }
 
+// TestDashboardRemainingModeShowsProjectionOverlay verifies the client-side
+// projection UX: after hydration the provider badge reads "한도 임박" from the
+// worst metric severity, and in remaining mode a weak metric's projection
+// hatch stays visible (not hidden) with the `overlay` class so it reads on
+// top of the remaining-amount fill instead of vanishing behind it.
+func TestDashboardRemainingModeShowsProjectionOverlay(t *testing.T) {
+	chromePath := os.Getenv("WEBUSAGE_CHROME_BIN")
+	if chromePath == "" {
+		chromePath = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+	}
+	if _, err := os.Stat(chromePath); err != nil {
+		t.Skipf("Chrome executable %q is unavailable: %v", chromePath, err)
+	}
+
+	// Given: claude session(투영 120%, danger) + weekly(reset 직후, weak, 투영 168%).
+	server, cleanup := setupTestServer(t)
+	defer cleanup()
+	providerID := mustCreateHTTPTestProvider(t, server, "claude", `{}`)
+	mustEnableHTTPTestProvider(t, server, "claude")
+	limit := 100.0
+	now := time.Now().UTC()
+	mustCreateHTTPTestSnapshots(t, server, []*store.UsageSnapshot{
+		{ProviderID: providerID, Metric: "session", Used: 20, Limit: &limit, CollectedAt: now.Add(-2 * time.Hour), ResetAt: ptrTime(now.Add(3 * time.Hour))},
+		{ProviderID: providerID, Metric: "session", Used: 60, Limit: &limit, CollectedAt: now, ResetAt: ptrTime(now.Add(3 * time.Hour))},
+		{ProviderID: providerID, Metric: "weekly", Used: 4, Limit: &limit, CollectedAt: now.Add(-4 * time.Hour), ResetAt: ptrTime(now.Add(160 * time.Hour))},
+		{ProviderID: providerID, Metric: "weekly", Used: 8, Limit: &limit, CollectedAt: now, ResetAt: ptrTime(now.Add(160 * time.Hour))},
+	})
+	localServer := httptest.NewServer(server.mux)
+	defer localServer.Close()
+
+	allocator, cancelAllocator := chromedp.NewExecAllocator(context.Background(),
+		chromedp.ExecPath(chromePath),
+		chromedp.Flag("headless", "new"),
+		chromedp.Flag("disable-gpu", true),
+		chromedp.Flag("disable-dev-shm-usage", true),
+		chromedp.Flag("no-first-run", true),
+		chromedp.Flag("no-default-browser-check", true),
+		chromedp.Flag("disable-background-networking", true),
+		chromedp.Flag("disable-extensions", true),
+	)
+	defer cancelAllocator()
+	ctx, cancelContext := chromedp.NewContext(allocator)
+	defer cancelContext()
+	ctx, cancelTimeout := context.WithTimeout(ctx, 90*time.Second)
+	defer cancelTimeout()
+
+	if err := chromedp.Run(ctx,
+		chromedp.EmulateViewport(1440, 1000),
+		chromedp.Navigate(localServer.URL),
+		chromedp.WaitReady("#cardGrid"),
+	); err != nil {
+		t.Fatalf("navigate dashboard in Chrome: %v", err)
+	}
+	// 남은량 기준으로 리로드해 applyGaugeMode가 남은량 경로를 타게 한다.
+	if err := browserSetStorageState(ctx, `{"gaugeMode":"remaining"}`); err != nil {
+		t.Fatalf("set remaining gauge mode: %v", err)
+	}
+	if err := browserReload(ctx); err != nil {
+		t.Fatalf("reload dashboard in remaining mode: %v", err)
+	}
+	if err := waitDashboardBrowser(ctx, `document.querySelector('#overviewStatus').textContent === 'API 연결됨'`); err != nil {
+		t.Fatalf("dashboard did not finish its remaining-mode refresh: %v", err)
+	}
+
+	// Then: 카드 배지는 worst danger 세션에서 "한도 임박", 약한 weekly 빗금은
+	// 숨겨지지 않고 overlay 클래스로 채움 위에 보인다.
+	assertDashboardBrowser(t, ctx, `document.querySelector('[data-provider-id="claude"] .provider-status').textContent.trim() === '한도 임박'`)
+	assertDashboardBrowser(t, ctx, `(() => {
+		const metric = document.querySelector('[data-provider-id="claude"] [data-metric="weekly"]');
+		const projection = metric && metric.querySelector('.gauge-proj');
+		return projection && !projection.hidden && projection.classList.contains('overlay') && projection.classList.contains('weak');
+	})()`)
+}
+
+// TestDashboardHealthStatusDoesNotMistakeSeverityForFailure ensures the
+// sidebar health status reports "수집 정상" when a provider is at danger
+// severity (한도 임박) but has no collection error — the danger badge must
+// not be counted as a collection failure (which would surface the empty-title
+// "알 수 없는 오류가 발생했습니다." fallback).
+func TestDashboardHealthStatusDoesNotMistakeSeverityForFailure(t *testing.T) {
+	chromePath := os.Getenv("WEBUSAGE_CHROME_BIN")
+	if chromePath == "" {
+		chromePath = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+	}
+	if _, err := os.Stat(chromePath); err != nil {
+		t.Skipf("Chrome executable %q is unavailable: %v", chromePath, err)
+	}
+
+	// Given: claude session(투영 120%, danger) + weekly(weak). 수집 에러는 없다.
+	server, cleanup := setupTestServer(t)
+	defer cleanup()
+	providerID := mustCreateHTTPTestProvider(t, server, "claude", `{}`)
+	mustEnableHTTPTestProvider(t, server, "claude")
+	limit := 100.0
+	now := time.Now().UTC()
+	mustCreateHTTPTestSnapshots(t, server, []*store.UsageSnapshot{
+		{ProviderID: providerID, Metric: "session", Used: 20, Limit: &limit, CollectedAt: now.Add(-2 * time.Hour), ResetAt: ptrTime(now.Add(3 * time.Hour))},
+		{ProviderID: providerID, Metric: "session", Used: 60, Limit: &limit, CollectedAt: now, ResetAt: ptrTime(now.Add(3 * time.Hour))},
+		{ProviderID: providerID, Metric: "weekly", Used: 4, Limit: &limit, CollectedAt: now.Add(-4 * time.Hour), ResetAt: ptrTime(now.Add(160 * time.Hour))},
+		{ProviderID: providerID, Metric: "weekly", Used: 8, Limit: &limit, CollectedAt: now, ResetAt: ptrTime(now.Add(160 * time.Hour))},
+	})
+	localServer := httptest.NewServer(server.mux)
+	defer localServer.Close()
+
+	allocator, cancelAllocator := chromedp.NewExecAllocator(context.Background(),
+		chromedp.ExecPath(chromePath),
+		chromedp.Flag("headless", "new"),
+		chromedp.Flag("disable-gpu", true),
+		chromedp.Flag("disable-dev-shm-usage", true),
+		chromedp.Flag("no-first-run", true),
+		chromedp.Flag("no-default-browser-check", true),
+		chromedp.Flag("disable-background-networking", true),
+		chromedp.Flag("disable-extensions", true),
+	)
+	defer cancelAllocator()
+	ctx, cancelContext := chromedp.NewContext(allocator)
+	defer cancelContext()
+	ctx, cancelTimeout := context.WithTimeout(ctx, 90*time.Second)
+	defer cancelTimeout()
+
+	if err := chromedp.Run(ctx,
+		chromedp.EmulateViewport(1440, 1000),
+		chromedp.Navigate(localServer.URL),
+		chromedp.WaitReady("#cardGrid"),
+	); err != nil {
+		t.Fatalf("navigate dashboard in Chrome: %v", err)
+	}
+	if err := waitDashboardBrowser(ctx, `document.querySelector('#overviewStatus').textContent === 'API 연결됨'`); err != nil {
+		t.Fatalf("dashboard did not finish its first client refresh: %v", err)
+	}
+
+	// Then: 사이드바 상태는 수집 실패가 아니라 정상이어야 하고, 한도 임박(danger)
+	// 배지의 빈 title이 "알 수 없는 오류"로 표시되지 않아야 한다.
+	assertDashboardBrowser(t, ctx, `document.getElementById('healthText').textContent === '수집 정상'`)
+	assertDashboardBrowser(t, ctx, `!document.getElementById('healthNote').textContent.includes('알 수 없는 오류')`)
+}
+
 func ptrBrowserFloat(value float64) *float64 { return &value }
 
 func ptrBrowserTime(value time.Time) *time.Time { return &value }

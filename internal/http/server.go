@@ -89,6 +89,10 @@ type SSRProviderView struct {
 	DisplayCycleType  string                            `json:"display_cycle_type,omitempty"`
 	PrimaryMetric     string                            `json:"primary_metric,omitempty"`
 	MetricProjections map[string]map[string]interface{} `json:"metric_projections,omitempty"`
+	// WorstSeverity is the most severe metric severity on the card, used by the
+	// SSR status badge so first paint already reads "한도 임박/주의/정상" instead
+	// of flashing "정상" until the client hydrates.
+	WorstSeverity domain.MetricSeverity `json:"worst_severity,omitempty"`
 }
 
 // NewServer creates a new HTTP server. templateDir is optional — defaults to "templates" when empty
@@ -448,6 +452,20 @@ func (s *Server) buildSSRProviderView(legacy domain.ProviderView, now time.Time)
 	if len(ssr.Metrics) > 0 {
 		ssr.DisplayCycleType = ssr.Metrics[0].CycleType
 	}
+	// WorstSeverity drives the SSR status badge: danger>warn>ok. A weak estimate
+	// never escalates severity (ProjectMetric gates forecast escalation on
+	// HasForecast), so a just-reset weekly does not read as "한도 임박".
+	worst := domain.MetricSeverityOK
+	for _, m := range ssr.Metrics {
+		if m.Severity == domain.MetricSeverityDanger {
+			worst = domain.MetricSeverityDanger
+			break
+		}
+		if m.Severity == domain.MetricSeverityWarn {
+			worst = domain.MetricSeverityWarn
+		}
+	}
+	ssr.WorstSeverity = worst
 	return ssr
 }
 

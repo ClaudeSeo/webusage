@@ -189,6 +189,13 @@
         .gauge-tick { position: absolute; top: -2px; bottom: -2px; width: 1.5px; background: color-mix(in oklab, var(--fg) 34%, transparent); }
         .gauge-fill.warn { background: var(--warn); }
         .gauge-fill.danger { background: var(--danger); }
+        /* 약한 추정(관측 구간이 짧아 근거가 약한 추정) 빗금을 흐리게. 톤 토큰은
+           그대로 둬서 위험도 색을 잃지 않는다 — 브라우저 테스트가 빗금 background에
+           톤 토큰 포함을 검사하므로 opacity로만 조절한다. */
+        .gauge-proj.weak { opacity: 0.4; }
+        /* 남은량 기준에서 빗금이 채움 뒤에 가려지지 않도록 채움 위에 겹치고
+           투명도를 낮춰 연하게 표시. 사용량 기준은 기존대로 채움 너머로 연장. */
+        .gauge-proj.overlay { z-index: 1; opacity: 0.5; }
         .metric-foot { display: flex; align-items: center; gap: 8px; margin-top: 7px; color: var(--muted); font-size: 12px; }
         .metric-foot .right { margin-left: auto; }
         .metric-foot .over { color: color-mix(in oklab, var(--danger), black 30%); font-weight: 500; }

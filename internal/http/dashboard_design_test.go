@@ -261,6 +261,55 @@ func TestDashboardLiveParityContract(t *testing.T) {
 	}
 }
 
+// TestDashboardWeakEstimateRendersDimmedForecast verifies the post-prototype
+// projection UX: a weak estimate (관측 구간이 짧아 외삽 근거가 약한 추정) no
+// longer swaps the projection slot for a "표본 부족" label and "페이스 계산
+// 불가" is never shown. Instead the forecast hatch and "리셋 시점 추정 X%" stay
+// visible but dimmed, the gauge fill is colored by severity, and the provider
+// badge reports "한도 임박" from the worst metric severity.
+func TestDashboardWeakEstimateRendersDimmedForecast(t *testing.T) {
+	// Given: claude session(투영 120%, danger) + weekly(reset 직후라 weak, 투영 168%).
+	// weekly의 resetAt을 now+160h로 두면 cycleStart=now-8h가 돼 두 스냅샷이 주기 안에
+	// 들어와 HasProjection=true가 되면서도 160 > 4×6 가드에 걸려 WeakEstimate=true.
+	server, cleanup := setupTestServer(t)
+	defer cleanup()
+	providerID := mustCreateHTTPTestProvider(t, server, "claude", `{}`)
+	mustEnableHTTPTestProvider(t, server, "claude")
+	limit := 100.0
+	now := time.Now().UTC()
+	mustCreateHTTPTestSnapshots(t, server, []*store.UsageSnapshot{
+		{ProviderID: providerID, Metric: "session", Used: 20, Limit: &limit, CollectedAt: now.Add(-2 * time.Hour), ResetAt: ptrTime(now.Add(3 * time.Hour))},
+		{ProviderID: providerID, Metric: "session", Used: 60, Limit: &limit, CollectedAt: now, ResetAt: ptrTime(now.Add(3 * time.Hour))},
+		{ProviderID: providerID, Metric: "weekly", Used: 4, Limit: &limit, CollectedAt: now.Add(-4 * time.Hour), ResetAt: ptrTime(now.Add(160 * time.Hour))},
+		{ProviderID: providerID, Metric: "weekly", Used: 8, Limit: &limit, CollectedAt: now, ResetAt: ptrTime(now.Add(160 * time.Hour))},
+	})
+
+	// When: the dashboard is server-rendered.
+	body := requestDashboardContractResponse(t, server, nethttp.MethodGet, "/")
+
+	// Then: legacy labels are gone, the forecast stays (dimmed for weak),
+	// the fill is severity-colored, the weak hatch carries a `weak` class,
+	// and the provider badge reports "한도 임박" from the worst danger metric.
+	if strings.Contains(body, "표본 부족") {
+		t.Fatal("weak estimate still renders the legacy '표본 부족' label")
+	}
+	if strings.Contains(body, "페이스 계산 불가") {
+		t.Fatal("dashboard renders the hidden '페이스 계산 불가' label")
+	}
+	if !strings.Contains(body, "한도 임박") {
+		t.Fatal("provider badge missing '한도 임박' for worst danger severity")
+	}
+	if !strings.Contains(body, "metric-projection right weak") {
+		t.Fatal("weak projection missing the dimmed 'weak' class")
+	}
+	if !strings.Contains(body, "gauge-fill metric-progress danger") {
+		t.Fatal("danger metric fill not severity-colored")
+	}
+	if !strings.Contains(body, "gauge-proj weak") {
+		t.Fatal("weak projection hatch missing the 'weak' class")
+	}
+}
+
 func requestDashboardContractResponse(t *testing.T, server *Server, method, path string) string {
 	t.Helper()
 	recorder := httptest.NewRecorder()
