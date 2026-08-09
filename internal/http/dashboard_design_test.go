@@ -79,6 +79,7 @@ func TestDashboardDesignContract(t *testing.T) {
 		`#settingsBtn { min-width: 44px`,
 		`.sidebar-foot .btn, .sidebar-foot [data-slot="button"] { height: 44px; }`,
 		`requestAnimationFrame(() => sidebar.querySelector('[data-view]')?.focus())`,
+		`function focusMetricPreferenceRow(providerId, metric) { const row = Array.from(document.querySelectorAll('.metric-preference-row'))`,
 		`lastFocusedElement = document.activeElement`,
 		`lastFocusedElement.focus()`,
 		`event.key === 'Escape'`,
@@ -141,6 +142,33 @@ func TestDashboardDesignContract(t *testing.T) {
 	for _, forbidden := range []string{"2026-08-03", "const SNAP", "const PROVIDERS"} {
 		if strings.Contains(body, forbidden) {
 			t.Fatalf("dashboard contains prototype fixture %q", forbidden)
+		}
+	}
+}
+
+func TestDashboardDarkThemeShouldPersistAcrossReload(t *testing.T) {
+	// Given: a dashboard rendered from the repository templates.
+	server, cleanup := setupTestServer(t)
+	defer cleanup()
+
+	// When: the dashboard is requested.
+	body := requestDashboardContractResponse(t, server, nethttp.MethodGet, "/")
+
+	// Then: an accessible theme toggle is restored from and written to browser storage.
+	for _, required := range []string{
+		`id="themeToggle"`,
+		`role="switch"`,
+		`aria-checked="false"`,
+		`const theme = saved.theme`,
+		`state.theme = saved.theme`,
+		`function applyTheme()`,
+		`function toggleTheme()`,
+		`document.documentElement.dataset.theme = state.theme`,
+		`theme: state.theme`,
+		`document.getElementById('themeToggle').addEventListener('click'`,
+	} {
+		if !strings.Contains(body, required) {
+			t.Fatalf("dashboard missing persistent dark-theme contract %q", required)
 		}
 	}
 }
@@ -694,6 +722,11 @@ async function main() {
 
   const run = await boot('normal');
   const document = run.document;
+  assert(document.getElementById('themeToggle').getAttribute('role') === 'switch' && document.getElementById('themeToggle').getAttribute('aria-checked') === 'false' && document.documentElement.dataset.theme === 'light', 'theme toggle did not start in light mode');
+  document.getElementById('themeToggle').click();
+  await settle(10);
+  let saved = JSON.parse(run.storage.writes.at(-1));
+  assert(saved.theme === 'dark' && document.getElementById('themeToggle').getAttribute('aria-checked') === 'true' && document.documentElement.dataset.theme === 'dark', 'dark theme state was not persisted');
   const disabledCard = document.querySelector('[data-provider-id="disabled-provider"]');
   const disabledRow = document.querySelector('#metricTableBody tr[data-provider="disabled-provider"]');
   assert(disabledCard && disabledCard.hidden, 'disabled provider card was not hidden in the live DOM');
@@ -719,9 +752,9 @@ async function main() {
   await settle(20);
   document.querySelector('#modeGroup [data-mode="delta"]').click();
   await settle(20);
-  let saved = JSON.parse(run.storage.writes.at(-1));
+  saved = JSON.parse(run.storage.writes.at(-1));
   assert(saved.view === 'trends' && saved.range === '24h' && saved.mode === 'delta', 'view/range/mode state was not persisted');
-  assert(document.querySelectorAll('#trendChart rect').length > 0, 'delta mode did not render chart bars');
+  assert(document.querySelectorAll('#trendChart .series-line').length > 0 && document.querySelectorAll('#trendChart rect').length === 0 && document.querySelectorAll('#trendChart .series-dot').length === 0, 'delta mode did not render lines only');
 
   let chip = document.querySelector('#chipRow [data-provider="claude"]');
   assert(chip, 'provider chip did not render');
@@ -770,7 +803,7 @@ async function main() {
   chip = document.querySelector('#chipRow [data-provider="claude"]');
   assert(chip && chip.getAttribute('aria-pressed') === 'false', 'hidden provider chip was not retained after activity navigation');
   saved = JSON.parse(run.storage.writes.at(-1));
-  assert(saved.view === 'trends' && saved.range === '24h' && saved.mode === 'delta' && saved.chartHidden.includes('claude') && saved.gaugeMode === 'remaining', 'final persisted UI state was incomplete');
+  assert(saved.view === 'trends' && saved.range === '24h' && saved.mode === 'delta' && saved.theme === 'dark' && saved.chartHidden.includes('claude') && saved.gaugeMode === 'remaining', 'final persisted UI state was incomplete');
 
   const validPayload = run.storage.snapshot('webusage.ui.v1');
   assert(validPayload, 'normal boot did not seed a persisted UI payload');
@@ -779,6 +812,7 @@ async function main() {
   assert(restoredDocument.getElementById('view-trends').hidden === false, 'valid saved view was not restored in the DOM');
   assert(restoredDocument.querySelector('#rangeTabs [data-range="24h"]').getAttribute('aria-selected') === 'true', 'valid saved range was not restored');
   assert(restoredDocument.querySelector('#modeGroup [data-mode="delta"]').getAttribute('aria-pressed') === 'true', 'valid saved chart mode was not restored');
+  assert(restoredDocument.getElementById('themeToggle').getAttribute('aria-checked') === 'true' && restoredDocument.documentElement.dataset.theme === 'dark', 'valid saved theme was not restored');
   const restoredChip = restoredDocument.querySelector('#chipRow [data-provider="claude"]');
   assert(restoredChip && restoredChip.getAttribute('aria-pressed') === 'false', 'valid saved provider-chip visibility was not restored');
   assert(restoredDocument.getElementById('gaugeModeSwitch').getAttribute('aria-checked') === 'false', 'valid saved gauge mode was not restored');
@@ -788,6 +822,7 @@ async function main() {
     assert(safeDocument.getElementById('view-overview').hidden === false, label + ' storage changed the default view');
     assert(safeDocument.querySelector('#rangeTabs [data-range="7d"]').getAttribute('aria-selected') === 'true', label + ' storage changed the default range');
     assert(safeDocument.querySelector('#modeGroup [data-mode="cumulative"]').getAttribute('aria-pressed') === 'true', label + ' storage changed the default chart mode');
+    assert(safeDocument.getElementById('themeToggle').getAttribute('aria-checked') === 'false' && safeDocument.documentElement.dataset.theme === 'light', label + ' storage changed the default theme');
     assert(safeDocument.getElementById('gaugeModeSwitch').getAttribute('aria-checked') === 'true', label + ' storage changed the default gauge mode');
   }
   assertSafeDefaults(await boot('corrupt'), 'corrupt');

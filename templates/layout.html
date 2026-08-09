@@ -4,6 +4,16 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>{{if .Title}}{{.Title}}{{else}}WebUsage{{end}}</title>
+    <script>
+        (() => {
+            try {
+                const saved = JSON.parse(window.localStorage.getItem('webusage.ui.v1') || '{}');
+                if (saved && (saved.theme === 'dark' || saved.theme === 'light')) document.documentElement.dataset.theme = saved.theme;
+            } catch (error) {
+                // A blocked or malformed storage value keeps the light default.
+            }
+        })();
+    </script>
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">
     <style>
         :root {
@@ -23,6 +33,12 @@
             --success: #10a37f;
             --warn: #f5a623;
             --danger: #ef4146;
+            --series-1: #10a37f;
+            --series-2: #0d0d0d;
+            --series-3: #f5a623;
+            --series-4: #ef4146;
+            --series-5: #6956d8;
+            --series-6: #3b82f6;
             --font-display: "Signifier", "Source Serif Pro", Georgia, ui-serif, serif;
             --font-body: "Söhne", "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
             --font-mono: "Söhne Mono", ui-monospace, "JetBrains Mono", Menlo, Consolas, monospace;
@@ -69,6 +85,34 @@
         :root:lang(ko) {
             --font-body: "Pretendard Variable", Pretendard, system-ui, -apple-system, sans-serif;
             --font-mono: "Pretendard Variable", ui-monospace, "JetBrains Mono", Menlo, monospace;
+        }
+
+        :root[data-theme="dark"] {
+            color-scheme: dark;
+            --bg: #171717;
+            --surface: #242424;
+            --surface-warm: #1e1e1e;
+            --fg: #f5f5f5;
+            --fg-2: #ffffff;
+            --muted: #b3b3b3;
+            --meta: #8d8d8d;
+            --border: #414141;
+            --border-soft: #353535;
+            --accent: #42d9ae;
+            --accent-on: #0d0d0d;
+            --accent-hover: #6deac5;
+            --accent-active: color-mix(in oklab, var(--accent), white 14%);
+            --success: #42d9ae;
+            --warn: #f7b955;
+            --danger: #ff676c;
+            --series-1: #42d9ae;
+            --series-2: #8ab4f8;
+            --series-3: #f7b955;
+            --series-4: #ff676c;
+            --series-5: #b9a8ff;
+            --series-6: #6fb1ff;
+            --elev-ring: 0 0 0 1px var(--border);
+            --elev-raised: 0 4px 16px rgba(0, 0, 0, .28);
         }
 
         *, *::before, *::after { box-sizing: border-box; }
@@ -226,7 +270,6 @@
         .chart-svg .thresh-line { stroke: color-mix(in oklab, var(--danger) 46%, transparent); stroke-width: 1; stroke-dasharray: 4 4; }
         .chart-svg .axis-text { fill: var(--muted); font-family: var(--font-mono); font-size: 11px; }
         .chart-svg .series-line { fill: none; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
-        .chart-svg .series-dot { stroke: var(--bg); stroke-width: 1.5; }
         .chart-svg .reset-mark { stroke: color-mix(in oklab, var(--fg) 30%, transparent); stroke-width: 1; stroke-dasharray: 2 3; }
         .chart-svg .crosshair { stroke: color-mix(in oklab, var(--fg) 34%, transparent); stroke-width: 1; }
         [data-slot="tooltip"], .chart-tooltip {
@@ -378,6 +421,8 @@
     <g id="i-up"><path d="M6 14l6-6 6 6"/></g>
     <g id="i-down"><path d="M6 10l6 6 6-6"/></g>
     <g id="i-clock"><circle cx="12" cy="12" r="9"/><path d="M12 7.5V12l3.5 2"/></g>
+    <g id="i-moon"><path d="M20.5 15.2A8.5 8.5 0 0 1 8.8 3.5 8.5 8.5 0 1 0 20.5 15.2z"/></g>
+    <g id="i-sun"><circle cx="12" cy="12" r="3.5"/><path d="M12 2.5v2M12 19.5v2M4.5 4.5l1.4 1.4M18.1 18.1l1.4 1.4M2.5 12h2M19.5 12h2M4.5 19.5l1.4-1.4M18.1 5.9l1.4-1.4"/></g>
 </defs></svg>
 
 <div class="app" data-od-id="app-shell">
@@ -400,7 +445,7 @@
         <header data-slot="topbar" data-od-id="topbar">
             <button class="btn btn-ghost btn-icon" data-slot="sidebar-trigger" id="navToggle" aria-label="메뉴 열기" aria-controls="sidebar-nav" aria-expanded="false"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><use href="#i-menu"/></svg></button>
             <div><div class="topbar-title" id="pageTitle">개요</div><div class="topbar-desc" id="pageDesc">활성 프로바이더의 현재 사용량과 리셋 전 추정 도달</div></div>
-            <div class="topbar-actions"><button data-slot="button" class="btn btn-ghost btn-icon" id="settingsBtn" aria-label="설정 열기" title="설정 (S)"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><use href="#i-settings"/></svg></button></div>
+            <div class="topbar-actions"><button data-slot="button" class="btn btn-ghost btn-icon" id="themeToggle" data-theme-toggle type="button" role="switch" aria-checked="false" aria-label="다크 모드 켜기" title="다크 모드 켜기"><svg class="icon" data-theme-icon="moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><use href="#i-moon"/></svg><svg class="icon" data-theme-icon="sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" hidden><use href="#i-sun"/></svg></button><button data-slot="button" class="btn btn-ghost btn-icon" id="settingsBtn" aria-label="설정 열기" title="설정 (S)"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><use href="#i-settings"/></svg></button></div>
         </header>
         <div data-slot="sheet-overlay" id="sheetOverlay" aria-hidden="true"></div>
         <aside data-slot="sheet" id="settingsDrawer" role="dialog" aria-modal="true" aria-labelledby="sheetTitle" aria-hidden="true">

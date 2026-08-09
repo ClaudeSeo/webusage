@@ -59,8 +59,9 @@
         trends: { title: '트렌드', desc: '수집 스냅샷 기반 사용률 추이' },
         activity: { title: '활동', desc: '수집기 실행 이력과 공백 구간' }
     };
-    const SERIES_COLORS = ['#10a37f', '#0d0d0d', '#f5a623', '#ef4146', '#6956d8', '#3b82f6'];
+    const SERIES_COLORS = ['var(--series-1)', 'var(--series-2)', 'var(--series-3)', 'var(--series-4)', 'var(--series-5)', 'var(--series-6)'];
     const RANGE_WINDOW_MS = { '5h': 5 * 3600000, '24h': 24 * 3600000, '7d': 7 * 86400000, '30d': 30 * 86400000 };
+    const FIVE_MINUTE_MS = 5 * 60 * 1000;
     const UI_STORAGE_KEY = 'webusage.ui.v1';
     const STALE_THRESHOLD_MS = {{staleThresholdSeconds}} * 1000;
     const state = {
@@ -71,12 +72,14 @@
         trends: {},
         range: '7d',
         mode: 'cumulative',
+        theme: 'light',
         chartHidden: [],
         selectedMetrics: {},
         chart: null,
         heatmapRange: '14d'
     };
     let tableSort = { key: 'provider', dir: 1 };
+    let trendRequestGeneration = 0;
 
     function getStorage() {
         try {
@@ -105,6 +108,8 @@
         if (['overview', 'providers', 'trends', 'activity'].includes(saved.view)) state.view = saved.view;
         if (['5h', '24h', '7d', '30d'].includes(saved.range)) state.range = saved.range;
         if (saved.mode === 'delta' || saved.mode === 'cumulative') state.mode = saved.mode;
+        const theme = saved.theme;
+        if (theme === 'dark' || theme === 'light') state.theme = saved.theme;
         if (saved.gaugeMode === 'remaining' || saved.gaugeMode === 'usage') state.gaugeMode = saved.gaugeMode;
         if (Array.isArray(saved.chartHidden)) state.chartHidden = saved.chartHidden.filter(value => typeof value === 'string');
         if (saved.selectedMetrics && typeof saved.selectedMetrics === 'object') state.selectedMetrics = saved.selectedMetrics;
@@ -118,6 +123,7 @@
                     view: state.view,
                     range: state.range,
                     mode: state.mode,
+                    theme: state.theme,
                     gaugeMode: state.gaugeMode,
                     chartHidden: state.chartHidden,
                     selectedMetrics: state.selectedMetrics
@@ -128,6 +134,28 @@
 
     function readGaugeMode() { restoreUIState(); return state.gaugeMode; }
     function saveGaugeMode() { persistUIState(); }
+
+    function applyTheme() {
+        const dark = state.theme === 'dark';
+        document.documentElement.dataset.theme = state.theme;
+        document.documentElement.classList.toggle('dark', dark);
+        const themeToggle = document.getElementById('themeToggle');
+        if (!themeToggle) return;
+        const label = dark ? '라이트 모드 켜기' : '다크 모드 켜기';
+        themeToggle.setAttribute('aria-checked', String(dark));
+        themeToggle.setAttribute('aria-label', label);
+        themeToggle.title = label;
+        const moon = themeToggle.querySelector('[data-theme-icon="moon"]');
+        const sun = themeToggle.querySelector('[data-theme-icon="sun"]');
+        if (moon) moon.hidden = dark;
+        if (sun) sun.hidden = !dark;
+    }
+
+    function toggleTheme() {
+        state.theme = state.theme === 'dark' ? 'light' : 'dark';
+        applyTheme();
+        persistUIState();
+    }
 
     function formatNumber(value) {
         const number = Number(value);
@@ -606,7 +634,7 @@
             const dot = document.createElement('span'); dot.className = 'swatch'; dot.style.background = SERIES_COLORS[index % SERIES_COLORS.length];
             const label = document.createElement('span'); label.textContent = providerObj.display_name || name;
             const metric = document.createElement('span'); metric.className = 'trend-chip-metric'; metric.textContent = selectedMetric(providerObj, name);
-            const points = document.createElement('span'); points.className = 'trend-chip-points'; const selected = getSelectedTrend(data, name); points.textContent = `${selected.length}점`;
+            const points = document.createElement('span'); points.className = 'trend-chip-points'; const selected = bucketTrendPoints(normalizeSelectedTrend(data, name)); points.textContent = `${selected.length}점`;
             button.append(dot, label, metric, points); return button;
         }));
     }
@@ -649,6 +677,20 @@
         });
     }
 
+    function bucketTrendPoints(points) {
+        const buckets = new Map();
+        (points || []).forEach(point => {
+            const timestamp = new Date(point.timestamp).getTime();
+            if (!Number.isFinite(timestamp)) return;
+            const bucketStart = Math.floor(timestamp / FIVE_MINUTE_MS) * FIVE_MINUTE_MS;
+            const lastPoint = buckets.get(bucketStart);
+            if (!lastPoint || timestamp >= new Date(lastPoint.timestamp).getTime()) buckets.set(bucketStart, point);
+        });
+        const entries = Array.from(buckets.entries());
+        Array.prototype.sort.call(entries, ([left], [right]) => left - right);
+        return entries.map(([bucketStart, lastPoint]) => ({ timestamp: new Date(bucketStart).toISOString(), value: Number(lastPoint.value) || 0 }));
+    }
+
     function showTrendChartEmptyState(message, hint = '') {
         const empty = document.getElementById('chartEmpty');
         empty.hidden = false; empty.replaceChildren();
@@ -666,8 +708,9 @@
         const empty = document.getElementById('chartEmpty'); empty.hidden = true;
         const rows = Object.keys(data || {}).filter(providerName => !state.chartHidden.includes(providerName)).map(providerName => {
             const points = normalizeSelectedTrend(data, providerName);
+            const bucketedPoints = bucketTrendPoints(points);
             const selectedLimit = getSelectedLimit(data, providerName);
-            return { providerName, points, selectedLimit };
+            return { providerName, points: bucketedPoints, selectedLimit };
         });
         const labels = rows.flatMap(row => row.points.map(point => point.timestamp));
         /* x축은 데이터 구간이 아니라 선택한 기간 전체다. 데이터 구간만 그리면 5시간과
@@ -678,7 +721,7 @@
         Array.prototype.sort.call(sortedLabels, (left, right) => new Date(left).getTime() - new Date(right).getTime());
         const shell = document.getElementById('chartShell');
         const width = shell.clientWidth || 900; const height = 320;
-        if (sortedLabels.length === 0) { empty.hidden = true; svg.hidden = false; svg.setAttribute('viewBox', `0 0 ${width} ${height}`); svg.innerHTML = `<text x="${width / 2}" y="${height / 2 - 6}" text-anchor="middle" class="axis-text" style="font-size:13px">이 구간에 수집된 스냅샷이 없습니다</text><text x="${width / 2}" y="${height / 2 + 14}" text-anchor="middle" class="axis-text">더 넓은 기간을 선택하거나 수집을 실행하세요</text>`; document.getElementById('chartFoot').textContent = `${rangeLabels[state.range] || state.range} 구간에 데이터 포인트 0개`; return; }
+        if (sortedLabels.length === 0) { empty.hidden = true; svg.hidden = false; svg.setAttribute('viewBox', `0 0 ${width} ${height}`); svg.innerHTML = `<text x="${width / 2}" y="${height / 2 - 6}" text-anchor="middle" class="axis-text" style="font-size:13px">이 구간에 수집된 스냅샷이 없습니다</text><text x="${width / 2}" y="${height / 2 + 14}" text-anchor="middle" class="axis-text">더 넓은 기간을 선택하거나 수집을 실행하세요</text>`; document.getElementById('chartFoot').textContent = `${rangeLabels[state.range] || state.range} 구간에 데이터 포인트 0개`; svg.dataset.renderedRange = state.range; svg.dataset.renderedMode = state.mode; return; }
         /* new Chart( is intentionally not used; the live chart is rendered as SVG. */
         svg.hidden = false;
         const pad = { top: 16, right: 16, bottom: 30, left: 40 }; const innerW = width - pad.left - pad.right; const innerH = height - pad.top - pad.bottom;
@@ -707,7 +750,7 @@
         const maxValue = state.mode === 'delta' ? Math.max(10, ...datasets.flatMap(dataset => dataset.values.filter(value => value !== null))) : limitValue;
         const yMax = state.mode === 'delta' ? Math.ceil(maxValue / 10) * 10 : limitValue;
         const Y = value => pad.top + (1 - (Number(value || 0) / yMax)) * innerH;
-        let markup = `<rect width="100%" height="100%" fill="transparent"/>`;
+        let markup = '';
         for (let index = 0; index <= 4; index++) { const value = (yMax / 4) * index; markup += `<line class="grid-line ${index === 0 ? 'zero' : ''}" x1="${pad.left}" y1="${Y(value)}" x2="${width - pad.right}" y2="${Y(value)}"/><text class="axis-text" x="${pad.left - 8}" y="${Y(value) + 4}" text-anchor="end">${Math.round(value)}${state.mode === 'delta' ? '' : '%'}</text>`; }
         if (state.mode !== 'delta') markup += `<line class="thresh-line" x1="${pad.left}" y1="${Y(90)}" x2="${width - pad.right}" y2="${Y(90)}"/><text class="axis-text" x="${width - pad.right}" y="${Y(90) - 6}" text-anchor="end" style="fill:color-mix(in oklab, var(--danger), black 24%)">한도 90%</text>`;
         /* 눈금은 기간을 5등분해 고정한다. 하루를 넘는 기간은 날짜만, 그 아래는 시각만
@@ -725,17 +768,9 @@
                0번이 아닌 시리즈는 L로 시작해 경로 전체가 렌더링되지 않는다. */
             let plotted = 0;
             const path = dataset.values.map((value, index) => value === null ? '' : `${plotted++ ? 'L' : 'M'}${X(sortedLabels[index]).toFixed(1)},${Y(value).toFixed(1)}`).filter(Boolean).join(' ');
+            if (path) markup += `<path class="series-line" d="${path}" stroke="${dataset.color}"/>`;
             if (state.mode === 'delta') {
-                dataset.values.forEach((value, index) => { if (value === null || value <= 0) return; const barWidth = Math.max(3, Math.min(18, innerW / Math.max(sortedLabels.length * datasets.length * 1.5, 1))); const offset = (datasets.indexOf(dataset) - (datasets.length - 1) / 2) * barWidth; markup += `<rect x="${X(sortedLabels[index]) + offset - barWidth / 2}" y="${Y(value)}" width="${barWidth}" height="${Math.max(2, Y(0) - Y(value))}" rx="2" fill="${dataset.color}" opacity=".9"/>`; });
                 dataset.resets.forEach(index => { markup += `<line class="reset-mark" x1="${X(sortedLabels[index])}" y1="${pad.top}" x2="${X(sortedLabels[index])}" y2="${Y(0)}"/>`; });
-            } else {
-                /* 첫 시리즈에만 면적을 깔아 기준선 역할을 준다. 모두 채우면 겹쳐서 읽히지 않는다. */
-                const drawn = dataset.values.map((value, index) => ({ value, index })).filter(point => point.value !== null);
-                if (path && drawn.length > 1 && datasets.indexOf(dataset) === 0) {
-                    markup += `<path d="${path} L${X(sortedLabels[drawn[drawn.length - 1].index]).toFixed(1)},${Y(0)} L${X(sortedLabels[drawn[0].index]).toFixed(1)},${Y(0)} Z" fill="${dataset.color}" opacity="0.07"/>`;
-                }
-                if (path) markup += `<path class="series-line" d="${path}" stroke="${dataset.color}"/>`;
-                dataset.values.forEach((value, index) => { if (value !== null) markup += `<circle class="series-dot" data-series="${dataset.providerName}" data-timestamp="${sortedLabels[index]}" cx="${X(sortedLabels[index])}" cy="${Y(value)}" r="3" fill="${dataset.color}"/>`; });
             }
         });
         markup += `<g id="chartCrosshair" style="display:none"><line class="crosshair" y1="${pad.top}" y2="${height - pad.bottom}"/></g>`;
@@ -751,6 +786,8 @@
         };
         svg.onmouseleave = () => { tip.classList.remove('open'); const crosshair = document.getElementById('chartCrosshair'); if (crosshair) crosshair.style.display = 'none'; };
         document.getElementById('chartFoot').textContent = `데이터 포인트 ${labels.length}개 · 시리즈 ${datasets.length}개` + (state.mode === 'delta' && datasets.some(dataset => dataset.resets.length) ? ` · 주기 리셋 ${datasets.reduce((count, dataset) => count + dataset.resets.length, 0)}회 감지` : '') + (state.range === '5h' ? ' · 수집 간격이 15분이라 5시간 구간은 점이 적습니다' : '');
+        svg.dataset.renderedRange = state.range;
+        svg.dataset.renderedMode = state.mode;
     }
 
     function renderTrendChart(data) {
@@ -766,17 +803,25 @@
     }
 
     async function loadTrendData(range = state.range) {
+        const requestGeneration = ++trendRequestGeneration;
         state.range = range;
-        const response = await fetch('/api/trends?range=' + encodeURIComponent(range) + '&mode=absolute');
-        if (!response.ok) throw new Error(`trends API ${response.status}`);
-        const data = await response.json();
-        state.trends = data || {};
-        persistUIState();
-        reconcileProviderMetricSelections(data);
-        renderProviderFilters(data);
-        renderMetricSelectors(data);
-        renderTrendChart(data);
-        document.getElementById('trendDataStatus').dataset.apiState = 'connected';
+        try {
+            const response = await fetch('/api/trends?range=' + encodeURIComponent(range) + '&mode=absolute');
+            if (!response.ok) throw new Error(`trends API ${response.status}`);
+            const data = await response.json();
+            if (requestGeneration !== trendRequestGeneration || state.range !== range) return false;
+            state.trends = data || {};
+            persistUIState();
+            reconcileProviderMetricSelections(data);
+            renderProviderFilters(data);
+            renderMetricSelectors(data);
+            renderTrendChart(data);
+            document.getElementById('trendDataStatus').dataset.apiState = 'connected';
+            return true;
+        } catch (error) {
+            if (requestGeneration !== trendRequestGeneration) return false;
+            throw error;
+        }
     }
 
     function setTrendMode(mode) { state.mode = mode === 'delta' ? 'delta' : 'cumulative'; persistUIState(); document.querySelectorAll('#modeGroup [data-mode]').forEach(button => button.setAttribute('aria-pressed', String(button.dataset.mode === state.mode))); if (state.trends && Object.keys(state.trends).length) renderTrendChart(state.trends); else loadTrendData(state.range).catch(() => { document.getElementById('trendDataStatus').dataset.apiState = 'error'; }); }
@@ -829,7 +874,7 @@
     }
 
     function findMetricPreferenceProvider(providerId) { return metricPreferenceDraft.find(provider => provider.provider_id === providerId); }
-    function focusMetricPreferenceRow(providerId, metric) { requestAnimationFrame(() => { const row = Array.from(document.querySelectorAll('.metric-preference-row')).find(candidate => candidate.dataset.providerId === providerId && candidate.dataset.metricKey === metric); if (row) row.focus(); }); }
+    function focusMetricPreferenceRow(providerId, metric) { const row = Array.from(document.querySelectorAll('.metric-preference-row')).find(candidate => candidate.dataset.providerId === providerId && candidate.dataset.metricKey === metric); if (row) row.focus(); }
     function moveMetricPreference(providerId, metric, direction) { const provider = findMetricPreferenceProvider(providerId); if (!provider) return; const availableIndexes = provider.items.map((item, index) => item.available ? index : -1).filter(index => index >= 0); const currentPosition = availableIndexes.findIndex(index => provider.items[index].metric === metric); const targetPosition = currentPosition + direction; if (currentPosition < 0 || targetPosition < 0 || targetPosition >= availableIndexes.length) return; const currentIndex = availableIndexes[currentPosition]; const targetIndex = availableIndexes[targetPosition]; [provider.items[currentIndex], provider.items[targetIndex]] = [provider.items[targetIndex], provider.items[currentIndex]]; clearMetricPreferenceError(); renderMetricPreferenceProviders(); announceMetricPreference(`${provider.items[targetIndex].label} 순서를 변경했습니다.`); focusMetricPreferenceRow(providerId, metric); }
     function reorderMetricPreference(providerId, sourceMetric, targetMetric) { if (sourceMetric === targetMetric) return; const provider = findMetricPreferenceProvider(providerId); if (!provider) return; const availableIndexes = provider.items.map((item, index) => item.available ? index : -1).filter(index => index >= 0); const availableItems = availableIndexes.map(index => provider.items[index]); const sourceIndex = availableItems.findIndex(item => item.metric === sourceMetric); const targetIndex = availableItems.findIndex(item => item.metric === targetMetric); if (sourceIndex < 0 || targetIndex < 0) return; const moved = availableItems.splice(sourceIndex, 1)[0]; availableItems.splice(targetIndex, 0, moved); availableIndexes.forEach((slot, index) => { provider.items[slot] = availableItems[index]; }); clearMetricPreferenceError(); renderMetricPreferenceProviders(); announceMetricPreference(`${moved.label} 순서를 변경했습니다.`); focusMetricPreferenceRow(providerId, sourceMetric); }
     function toggleMetricPreference(providerId, metric, visible) { const provider = findMetricPreferenceProvider(providerId); if (!provider) return; const item = provider.items.find(candidate => candidate.metric === metric && candidate.available); if (!item) return; const visibleCount = provider.items.filter(candidate => candidate.available && candidate.visible).length; if (!visible && item.visible && visibleCount <= 1) { showMetricPreferenceError('최소 한 개의 사용량 항목은 표시해야 합니다.', false); announceMetricPreference('마지막 표시 항목은 숨길 수 없습니다.'); renderMetricPreferenceProviders(); focusMetricPreferenceRow(providerId, metric); return; } item.visible = visible; clearMetricPreferenceError(); updateMetricPreferenceButtons(); announceMetricPreference(`${item.label} 표시 설정을 변경했습니다.`); }
@@ -907,6 +952,7 @@
     document.getElementById('nav').addEventListener('click', event => { const button = event.target.closest('[data-view]'); if (!button) return; state.view = button.dataset.view; persistUIState(); renderNavigation(); if (state.view === 'trends') loadTrendData(state.range).catch(() => {}); if (state.view === 'activity') loadHeatmapData(); closeNav(); });
     document.getElementById('navToggle').addEventListener('click', () => document.getElementById('sidebar-nav').classList.contains('open') ? closeNav() : openNav());
     document.getElementById('navOverlay').addEventListener('click', () => closeNav());
+    document.getElementById('themeToggle').addEventListener('click', toggleTheme);
     document.getElementById('settingsBtn').addEventListener('click', openSettings);
     document.getElementById('sheetClose').addEventListener('click', closeSettings);
     document.getElementById('sheetOverlay').addEventListener('click', closeSettings);
@@ -926,6 +972,7 @@
     window.addEventListener('resize', () => { if (!window.matchMedia('(max-width: 960px)').matches) closeNav(false); });
 
     state.gaugeMode = readGaugeMode();
+    applyTheme();
     renderNavigation();
     applyGaugeMode();
     renderProviderTable();

@@ -1,8 +1,13 @@
 package http
 
 import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"os/exec"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestTrendsChartClientShouldReconcileVisibleSelectionWithoutReordering(t *testing.T) {
@@ -94,5 +99,139 @@ func TestDashboardTrendChartShouldNormalizeLimitedMetricsToPercent(t *testing.T)
 		if !strings.Contains(body, required) {
 			t.Fatalf("dashboard missing limited-metric normalization contract %q", required)
 		}
+	}
+}
+
+func TestDashboardTrendChartShouldBucketSnapshotsIntoFiveMinuteIntervalsUsingLastValue(t *testing.T) {
+	// Given: a dashboard whose trend renderer receives raw snapshots.
+	server, _ := setupMetricPreferenceTestServer(t)
+	createMetricPreferenceProvider(t, server, "claude", "session")
+
+	// When: the dashboard HTML is fetched.
+	body := requestMetricPreferenceDashboard(t, server)
+
+	// Then: plotting groups timestamps into five-minute buckets and keeps the latest value in each bucket.
+	for _, required := range []string{
+		`const FIVE_MINUTE_MS = 5 * 60 * 1000;`,
+		`function bucketTrendPoints(points)`,
+		`Math.floor(timestamp / FIVE_MINUTE_MS) * FIVE_MINUTE_MS`,
+		`lastPoint.timestamp`,
+		`lastPoint.value`,
+		`const points = normalizeSelectedTrend(data, providerName);`,
+		`const bucketedPoints = bucketTrendPoints(points);`,
+	} {
+		if !strings.Contains(body, required) {
+			t.Fatalf("dashboard missing five-minute trend bucket contract %q", required)
+		}
+	}
+
+	points, err := json.Marshal([]map[string]interface{}{
+		{"timestamp": "2026-08-09T00:04:59Z", "value": 25},
+		{"timestamp": "2026-08-09T00:01:00Z", "value": 10},
+		{"timestamp": "2026-08-09T00:05:01Z", "value": 30},
+	})
+	if err != nil {
+		t.Fatalf("encode raw trend points: %v", err)
+	}
+	nodePath, err := exec.LookPath("node")
+	if err != nil {
+		t.Fatalf("five-minute bucket behavior requires node: %v", err)
+	}
+	bucketSource := metricPreferenceFunctionSource(t, body, "bucketTrendPoints", "showTrendChartEmptyState")
+	script := fmt.Sprintf(`
+const FIVE_MINUTE_MS = 5 * 60 * 1000;
+%s
+const result = bucketTrendPoints(%s);
+if (result.length !== 2) throw new Error('expected two five-minute buckets, got ' + result.length);
+if (result[0].timestamp !== %q || result[1].timestamp !== %q) throw new Error('unexpected bucket timestamps: ' + JSON.stringify(result));
+if (result[0].value !== 25 || result[1].value !== 30) throw new Error('latest value was not retained: ' + JSON.stringify(result));
+`, bucketSource, points, "2026-08-09T00:00:00.000Z", "2026-08-09T00:05:00.000Z")
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	command := exec.CommandContext(ctx, nodePath, "-e", script)
+	output, err := command.CombinedOutput()
+	if ctx.Err() != nil {
+		t.Fatalf("five-minute bucket behavior timed out: %v", ctx.Err())
+	}
+	if err != nil {
+		t.Fatalf("five-minute bucket behavior failed: %v\n%s", err, strings.TrimSpace(string(output)))
+	}
+}
+
+func TestDashboardTrendChartShouldRenderLinesOnlyInCumulativeAndDeltaModes(t *testing.T) {
+	// Given: a dashboard with cumulative and delta trend modes.
+	server, _ := setupMetricPreferenceTestServer(t)
+	createMetricPreferenceProvider(t, server, "claude", "session")
+
+	// When: the trend SVG renderer source is inspected.
+	body := requestMetricPreferenceDashboard(t, server)
+	renderSource := metricPreferenceFunctionSource(t, body, "renderTrendSVG", "renderTrendChart")
+
+	// Then: both modes emit series paths without point circles or bar rectangles.
+	if !strings.Contains(renderSource, "if (path) markup += `<path class=\"series-line\"") {
+		t.Fatal("trend renderer must emit a series line path")
+	}
+	if strings.Contains(renderSource, "<circle") {
+		t.Fatal("trend renderer must not emit point circles")
+	}
+	if strings.Contains(renderSource, "<rect") {
+		t.Fatal("trend renderer must not emit delta bar rectangles")
+	}
+	if !strings.Contains(renderSource, "state.mode === 'delta'") {
+		t.Fatal("trend renderer must preserve delta mode handling")
+	}
+
+	// When: two trend requests complete out of order.
+	loadSource := metricPreferenceFunctionSource(t, body, "loadTrendData", "setTrendMode")
+	loadSource = "async " + loadSource
+	nodePath, err := exec.LookPath("node")
+	if err != nil {
+		t.Fatalf("latest trend request behavior requires node: %v", err)
+	}
+	script := fmt.Sprintf(`
+const state = { range: '7d', trends: {} };
+let trendRequestGeneration = 0;
+const status = { dataset: {} };
+const pending = [];
+const persisted = [];
+const rendered = [];
+const olderPayload = { older: { display_name: 'Older response' } };
+const newerPayload = { newer: { display_name: 'Newer response' } };
+const document = { getElementById(id) { if (id !== 'trendDataStatus') throw new Error('unexpected element ' + id); return status; } };
+const persistUIState = () => persisted.push(state.range);
+const reconcileProviderMetricSelections = () => {};
+const renderProviderFilters = () => {};
+const renderMetricSelectors = () => {};
+const renderTrendChart = data => rendered.push(data);
+function fetch(url) {
+    return new Promise(resolve => pending.push({ url, resolve }));
+}
+function response(payload) {
+    return { ok: true, json: async () => payload };
+}
+%s
+(async () => {
+    const olderRequest = loadTrendData('5h');
+    const newerRequest = loadTrendData('30d');
+    if (pending.length !== 2) throw new Error('expected two deferred trend requests, got ' + pending.length);
+    pending[1].resolve(response(newerPayload));
+    await newerRequest;
+    pending[0].resolve(response(olderPayload));
+    await olderRequest;
+    if (state.trends !== newerPayload) throw new Error('stale response replaced newer state: ' + JSON.stringify(state.trends));
+    if (rendered.length !== 1 || rendered[0] !== newerPayload) throw new Error('rendered payloads were not latest-only: ' + rendered.length);
+    if (persisted.length !== 1 || persisted[0] !== '30d') throw new Error('stale response persisted state: ' + JSON.stringify(persisted));
+    if (status.dataset.apiState !== 'connected') throw new Error('newer response did not mark trends connected');
+})().catch(error => { console.error(error); process.exitCode = 1; });
+`, loadSource)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	command := exec.CommandContext(ctx, nodePath, "-e", script)
+	output, err := command.CombinedOutput()
+	if ctx.Err() != nil {
+		t.Fatalf("latest trend request behavior timed out: %v", ctx.Err())
+	}
+	if err != nil {
+		t.Fatalf("latest trend request behavior failed: %v\n%s", err, strings.TrimSpace(string(output)))
 	}
 }

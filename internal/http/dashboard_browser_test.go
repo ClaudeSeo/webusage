@@ -91,6 +91,26 @@ func TestDashboardBrowserAcceptance(t *testing.T) {
 	if err := waitDashboardBrowser(ctx, `document.readyState === 'complete' && document.querySelectorAll('#cardGrid [data-slot="card"]').length >= 2 && document.querySelector('#overviewStatus').textContent === 'API 연결됨'`); err != nil {
 		t.Fatalf("initial dashboard did not become ready: %v", err)
 	}
+	assertDashboardBrowser(t, ctx, `document.querySelector('#themeToggle').getAttribute('role') === 'switch' && document.querySelector('#themeToggle').getAttribute('aria-checked') === 'false' && document.documentElement.dataset.theme === 'light'`)
+	if err := browserDOMClick(ctx, "#themeToggle"); err != nil {
+		t.Fatalf("toggle dark theme: %v", err)
+	}
+	if err := waitDashboardBrowser(ctx, `document.querySelector('#themeToggle').getAttribute('aria-checked') === 'true' && document.documentElement.dataset.theme === 'dark'`); err != nil {
+		t.Fatalf("dark theme did not activate: %v", err)
+	}
+	var beforeThemeReloadMarker float64
+	if err := browserEvaluate(ctx, `performance.timeOrigin`, &beforeThemeReloadMarker); err != nil {
+		t.Fatalf("capture pre-reload document marker: %v", err)
+	}
+	if err := browserReload(ctx); err != nil {
+		t.Fatalf("reload dashboard in dark theme: %v", err)
+	}
+	darkReloadPredicate := fmt.Sprintf(`performance.timeOrigin !== %f && document.querySelector('#overviewStatus').textContent === 'API 연결됨' && document.querySelector('#themeToggle').getAttribute('aria-checked') === 'true' && document.documentElement.dataset.theme === 'dark'`, beforeThemeReloadMarker)
+	if err := waitDashboardBrowser(ctx, darkReloadPredicate); err != nil {
+		var reloadState string
+		_ = browserEvaluate(ctx, `JSON.stringify({marker: performance.timeOrigin, overview: document.querySelector('#overviewStatus')?.textContent, theme: document.documentElement.dataset.theme, checked: document.querySelector('#themeToggle')?.getAttribute('aria-checked')})`, &reloadState)
+		t.Fatalf("dark theme did not persist across reload: %v (state=%s)", err, reloadState)
+	}
 
 	// Desktop layout, SSR projection/error state, eight-column semantics, and
 	// real SVG/gauge geometry are checked through computed browser state.
@@ -155,7 +175,7 @@ func TestDashboardBrowserAcceptance(t *testing.T) {
 	if err := chromedp.Run(ctx, chromedp.Click("#metricValueHeader")); err != nil {
 		t.Fatalf("sort usage values: %v", err)
 	}
-	assertDashboardBrowser(t, ctx, `(() => {
+	waitDashboardSort(t, ctx, "usage value sort", `(() => {
 		const rows = [...document.querySelectorAll('#metricTableBody tr:not([hidden])')];
 		const order = rows.map(row => row.dataset.provider + ':' + row.dataset.metric);
 		const values = rows.map(row => row.querySelector('.table-used').textContent.trim());
@@ -166,7 +186,7 @@ func TestDashboardBrowserAcceptance(t *testing.T) {
 	if err := chromedp.Run(ctx, chromedp.Click("#metricPercentHeader")); err != nil {
 		t.Fatalf("sort usage percentages: %v", err)
 	}
-	assertDashboardBrowser(t, ctx, `(() => {
+	waitDashboardSort(t, ctx, "usage percentage sort", `(() => {
 		const rows = [...document.querySelectorAll('#metricTableBody tr:not([hidden])')];
 		const order = rows.map(row => row.dataset.provider + ':' + row.dataset.metric);
 		const values = rows.map(row => row.querySelector('.table-percent').textContent.trim());
@@ -218,7 +238,7 @@ func TestDashboardBrowserAcceptance(t *testing.T) {
 	if err := chromedp.Run(ctx, chromedp.Click("#metricValueHeader")); err != nil {
 		t.Fatalf("sort remaining values: %v", err)
 	}
-	assertDashboardBrowser(t, ctx, `(() => {
+	waitDashboardSort(t, ctx, "remaining value sort", `(() => {
 		const rows = [...document.querySelectorAll('#metricTableBody tr:not([hidden])')];
 		const order = rows.map(row => row.dataset.provider + ':' + row.dataset.metric);
 		const values = rows.map(row => row.querySelector('.table-used').textContent.trim());
@@ -229,7 +249,7 @@ func TestDashboardBrowserAcceptance(t *testing.T) {
 	if err := chromedp.Run(ctx, chromedp.Click("#metricPercentHeader")); err != nil {
 		t.Fatalf("sort remaining percentages: %v", err)
 	}
-	assertDashboardBrowser(t, ctx, `(() => {
+	waitDashboardSort(t, ctx, "remaining percentage sort", `(() => {
 		const rows = [...document.querySelectorAll('#metricTableBody tr:not([hidden])')];
 		const order = rows.map(row => row.dataset.provider + ':' + row.dataset.metric);
 		const values = rows.map(row => row.querySelector('.table-percent').textContent.trim());
@@ -266,46 +286,67 @@ func TestDashboardBrowserAcceptance(t *testing.T) {
 	if err := chromedp.Run(ctx, chromedp.Click(`[data-view="trends"]`)); err != nil {
 		t.Fatalf("open trends view: %v", err)
 	}
-	if err := waitDashboardBrowser(ctx, `document.querySelector('#view-trends') && !document.querySelector('#view-trends').hidden && document.querySelectorAll('#chipRow [data-slot="chip"]').length >= 2`); err != nil {
+	if err := waitDashboardBrowser(ctx, `document.querySelector('#view-trends') && !document.querySelector('#view-trends').hidden && document.querySelectorAll('#chipRow [data-slot="chip"]').length >= 2 && document.querySelector('#trendChart').dataset.renderedRange === '7d' && document.querySelector('#trendChart').dataset.renderedMode === 'cumulative'`); err != nil {
 		t.Fatalf("trends did not load: %v", err)
-	}
-	// Let the initial dashboard hydration settle before issuing range changes;
-	// the real client intentionally performs these requests concurrently.
-	if err := chromedp.Run(ctx, chromedp.Sleep(500*time.Millisecond)); err != nil {
-		t.Fatalf("wait for trend hydration: %v", err)
 	}
 	assertDashboardBrowser(t, ctx, `document.querySelector('#trendDataStatus').dataset.apiState === 'connected' && document.querySelector('#trendDataStatus').textContent === '설정의 지표 순서 기준' && document.querySelectorAll('#trendChart .series-line').length >= 1 && document.querySelector('#trendChart').textContent.includes('KST')`)
 	// Every plotted series must own a line, not just the one whose first point
 	// happens to start the shared timeline. A path that opens with anything but
 	// M is dropped by the renderer, so the series would silently vanish.
 	assertDashboardBrowser(t, ctx, `(() => {
-		const counts = Array.from(document.querySelectorAll('#trendChart .series-dot')).reduce((totals, dot) => {
-			totals[dot.dataset.series] = (totals[dot.dataset.series] || 0) + 1;
-			return totals;
-		}, {});
-		const expected = Object.values(counts).filter(count => count >= 2).length;
 		const lines = Array.from(document.querySelectorAll('#trendChart .series-line'));
-		return expected >= 2 && lines.length === expected && lines.every(line => line.getAttribute('d').startsWith('M'));
+		return lines.length >= 2 && lines.every(line => line.getAttribute('d').startsWith('M')) && document.querySelectorAll('#trendChart .series-dot').length === 0;
+	})()`)
+	assertDashboardBrowser(t, ctx, `(() => {
+		const parseRGB = value => {
+			const match = value.match(/rgba?\(([^)]+)\)/);
+			return match ? match[1].split(',').slice(0, 3).map(Number) : null;
+		};
+		const luminance = value => {
+			const channels = parseRGB(value);
+			if (!channels || channels.some(channel => !Number.isFinite(channel))) return null;
+			const linear = channels.map(channel => {
+				const normalized = channel / 255;
+				return normalized <= 0.03928 ? normalized / 12.92 : Math.pow((normalized + 0.055) / 1.055, 2.4);
+			});
+			return 0.2126 * linear[0] + 0.7152 * linear[1] + 0.0722 * linear[2];
+		};
+		const contrast = (foreground, background) => {
+			const foregroundLuminance = luminance(foreground);
+			const backgroundLuminance = luminance(background);
+			if (foregroundLuminance === null || backgroundLuminance === null) return 0;
+			const lighter = Math.max(foregroundLuminance, backgroundLuminance);
+			const darker = Math.min(foregroundLuminance, backgroundLuminance);
+			return (lighter + 0.05) / (darker + 0.05);
+		};
+		const chart = document.querySelector('#trendChart');
+		const card = chart && chart.closest('[data-slot="card"]');
+		const background = card && getComputedStyle(card).backgroundColor;
+		const lines = Array.from(document.querySelectorAll('#trendChart .series-line')).map(line => getComputedStyle(line).stroke);
+		const swatches = Array.from(document.querySelectorAll('#chipRow .swatch')).map(swatch => getComputedStyle(swatch).backgroundColor);
+		return document.documentElement.dataset.theme === 'dark' && lines.length >= 2 && swatches.length >= 2 && lines.concat(swatches).every(color => contrast(color, background) >= 3);
 	})()`)
 	for _, rangeValue := range []string{"5h", "24h", "7d", "30d"} {
 		if err := chromedp.Run(ctx, chromedp.Click(fmt.Sprintf(`#rangeTabs [data-range="%s"]`, rangeValue), chromedp.ByQuery)); err != nil {
 			t.Fatalf("select trend range %s: %v", rangeValue, err)
 		}
-		if err := waitDashboardBrowser(ctx, fmt.Sprintf(`document.querySelector('#rangeTabs [data-range="%s"]').getAttribute('aria-selected') === 'true' && document.querySelector('#chartFoot').textContent.includes('데이터 포인트')`, rangeValue)); err != nil {
+		if err := waitDashboardBrowser(ctx, fmt.Sprintf(`document.querySelector('#rangeTabs [data-range="%s"]').getAttribute('aria-selected') === 'true' && document.querySelector('#trendChart').dataset.renderedRange === %q && document.querySelector('#trendChart').dataset.renderedMode === 'cumulative'`, rangeValue, rangeValue)); err != nil {
 			var state string
-			_ = browserEvaluate(ctx, `JSON.stringify({selected: document.querySelector('#rangeTabs [data-range="`+rangeValue+`"]').getAttribute('aria-selected'), foot: document.querySelector('#chartFoot').textContent, status: document.querySelector('#trendDataStatus').textContent})`, &state)
+			_ = browserEvaluate(ctx, `JSON.stringify({selected: document.querySelector('#rangeTabs [data-range="`+rangeValue+`"]')?.getAttribute('aria-selected'), renderedRange: document.querySelector('#trendChart')?.dataset.renderedRange, renderedMode: document.querySelector('#trendChart')?.dataset.renderedMode, foot: document.querySelector('#chartFoot')?.textContent, status: document.querySelector('#trendDataStatus')?.textContent})`, &state)
 			t.Fatalf("trend range %s did not render: %v (state=%s)", rangeValue, err, state)
 		}
 	}
 	if err := chromedp.Run(ctx, chromedp.Click(`#modeGroup [data-mode="delta"]`)); err != nil {
 		t.Fatalf("select delta mode: %v", err)
 	}
-	if err := waitDashboardBrowser(ctx, `document.querySelector('#modeGroup [data-mode="delta"]').getAttribute('aria-pressed') === 'true' && document.querySelector('#chartFoot').textContent.includes('데이터 포인트')`); err != nil {
-		t.Fatalf("delta trend mode did not render: %v", err)
+	if err := waitDashboardBrowser(ctx, `document.querySelector('#modeGroup [data-mode="delta"]').getAttribute('aria-pressed') === 'true' && document.querySelector('#trendChart').dataset.renderedRange === '30d' && document.querySelector('#trendChart').dataset.renderedMode === 'delta'`); err != nil {
+		var state string
+		_ = browserEvaluate(ctx, `JSON.stringify({pressed: document.querySelector('#modeGroup [data-mode="delta"]')?.getAttribute('aria-pressed'), renderedRange: document.querySelector('#trendChart')?.dataset.renderedRange, renderedMode: document.querySelector('#trendChart')?.dataset.renderedMode, foot: document.querySelector('#chartFoot')?.textContent})`, &state)
+		t.Fatalf("delta trend mode did not render: %v (state=%s)", err, state)
 	}
-	assertDashboardBrowser(t, ctx, `document.querySelectorAll('#trendChart .reset-mark').length >= 1 && document.querySelectorAll('#trendChart rect').length >= 1`)
+	assertDashboardBrowser(t, ctx, `document.querySelectorAll('#trendChart .reset-mark').length >= 1 && document.querySelectorAll('#trendChart .series-line').length >= 1 && document.querySelectorAll('#trendChart rect').length === 0 && document.querySelectorAll('#trendChart .series-dot').length === 0`)
 	var hoverPoint [2]float64
-	if err := browserEvaluate(ctx, `(() => { const rects = document.querySelectorAll('#trendChart rect'); const rect = rects[1].getBoundingClientRect(); return [rect.left + rect.width / 2, rect.top + rect.height / 2]; })()`, &hoverPoint); err != nil {
+	if err := browserEvaluate(ctx, `(() => { const svg = document.querySelector('#trendChart'); const line = svg.querySelector('.series-line'); const point = line.getPointAtLength(0); const rect = svg.getBoundingClientRect(); const viewBox = svg.viewBox.baseVal; return [rect.left + point.x / viewBox.width * rect.width, rect.top + point.y / viewBox.height * rect.height]; })()`, &hoverPoint); err != nil {
 		t.Fatalf("locate trend chart hover target: %v", err)
 	}
 	if err := chromedp.Run(ctx, chromedp.MouseEvent(input.MouseMoved, hoverPoint[0], hoverPoint[1])); err != nil {
@@ -335,7 +376,7 @@ func TestDashboardBrowserAcceptance(t *testing.T) {
 	if err := chromedp.Run(ctx, chromedp.Evaluate(`Array.from(document.querySelectorAll('#chipRow [data-slot="chip"][aria-pressed="false"]')).forEach(button => button.click())`, nil)); err != nil {
 		t.Fatalf("restore trend series: %v", err)
 	}
-	if err := waitDashboardBrowser(ctx, `document.querySelectorAll('#trendChart rect').length >= 1`); err != nil {
+	if err := waitDashboardBrowser(ctx, `document.querySelectorAll('#trendChart .series-line').length >= 1`); err != nil {
 		t.Fatalf("trend series did not restore: %v", err)
 	}
 
@@ -547,12 +588,17 @@ func TestDashboardBrowserAcceptance(t *testing.T) {
 	if err := browserDOMClick(ctx, `#metricPreferenceProviders button[role="switch"]`); err != nil {
 		t.Fatalf("save metric preference: %v", err)
 	}
+	var beforePreferenceReloadMarker float64
+	if err := browserEvaluate(ctx, `performance.timeOrigin`, &beforePreferenceReloadMarker); err != nil {
+		t.Fatalf("capture pre-preference-reload document marker: %v", err)
+	}
 	if err := browserDOMClick(ctx, "#metricPreferenceSaveButton"); err != nil {
 		t.Fatalf("save metric preference: %v", err)
 	}
-	if err := waitDashboardBrowser(ctx, `document.readyState === 'complete' && Boolean(document.querySelector('#cardGrid')) && Boolean(document.querySelector('#gaugeModeSwitch'))`); err != nil {
+	preferenceReloadPredicate := fmt.Sprintf(`performance.timeOrigin !== %f && document.readyState === 'complete' && Boolean(document.querySelector('#cardGrid')) && Boolean(document.querySelector('#gaugeModeSwitch'))`, beforePreferenceReloadMarker)
+	if err := waitDashboardBrowser(ctx, preferenceReloadPredicate); err != nil {
 		var reloadState string
-		_ = browserEvaluate(ctx, `JSON.stringify({ready:document.readyState,url:location.href,card:Boolean(document.querySelector('#cardGrid')),gauge:Boolean(document.querySelector('#gaugeModeSwitch')),save:document.querySelector('#metricPreferenceSaveButton') && document.querySelector('#metricPreferenceSaveButton').disabled})`, &reloadState)
+		_ = browserEvaluate(ctx, `JSON.stringify({marker:performance.timeOrigin,ready:document.readyState,url:location.href,card:Boolean(document.querySelector('#cardGrid')),gauge:Boolean(document.querySelector('#gaugeModeSwitch')),save:document.querySelector('#metricPreferenceSaveButton')?.disabled})`, &reloadState)
 		t.Fatalf("dashboard did not reload after saving preferences: %v (state=%s)", err, reloadState)
 	}
 
@@ -1015,6 +1061,28 @@ func assertDashboardBrowser(t *testing.T, ctx context.Context, expression string
 	}
 	if !result {
 		t.Fatalf("browser assertion failed: %s", expression)
+	}
+}
+
+func waitDashboardSort(t *testing.T, ctx context.Context, label, expression string) {
+	t.Helper()
+	if err := waitDashboardBrowser(ctx, expression); err == nil {
+		return
+	} else {
+		var observed string
+		_ = browserEvaluate(ctx, `JSON.stringify((() => {
+			const valueHeader = document.querySelector('#metricValueHeader');
+			const percentHeader = document.querySelector('#metricPercentHeader');
+			const rows = [...document.querySelectorAll('#metricTableBody tr:not([hidden])')].slice(0, 4);
+			return {
+				valueSort: valueHeader?.getAttribute('aria-sort'),
+				percentSort: percentHeader?.getAttribute('aria-sort'),
+				order: rows.map(row => row.dataset.provider + ':' + row.dataset.metric),
+				used: rows.map(row => row.querySelector('.table-used')?.textContent.trim()),
+				percent: rows.map(row => row.querySelector('.table-percent')?.textContent.trim()),
+			};
+		})())`, &observed)
+		t.Fatalf("%s did not settle: %v (state=%s)", label, err, observed)
 	}
 }
 
