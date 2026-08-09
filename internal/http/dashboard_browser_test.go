@@ -806,12 +806,10 @@ func TestDashboardStaleStatusShouldRecoverAfterCollectionAndIgnoreDisabledProvid
 	}
 }
 
-// TestDashboardRemainingModeShowsProjectionOverlay verifies the client-side
-// projection UX: after hydration the provider badge reads "한도 임박" from the
-// worst metric severity, and in remaining mode a weak metric's projection
-// hatch stays visible (not hidden) with the `overlay` class so it reads on
-// top of the remaining-amount fill instead of vanishing behind it.
-func TestDashboardRemainingModeShowsProjectionOverlay(t *testing.T) {
+// TestDashboardRemainingModeHidesUsageProjectionDetails verifies that remaining
+// mode keeps the amount gauge focused on what is left by hiding pace, projected
+// reset usage, and projection hatches in both cards and the metric table.
+func TestDashboardRemainingModeHidesUsageProjectionDetails(t *testing.T) {
 	chromePath := os.Getenv("WEBUSAGE_CHROME_BIN")
 	if chromePath == "" {
 		chromePath = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
@@ -870,13 +868,44 @@ func TestDashboardRemainingModeShowsProjectionOverlay(t *testing.T) {
 		t.Fatalf("dashboard did not finish its remaining-mode refresh: %v", err)
 	}
 
-	// Then: 카드 배지는 worst danger 세션에서 "한도 임박", 약한 weekly 빗금은
-	// 숨겨지지 않고 overlay 클래스로 채움 위에 보인다.
+	// Then: the provider status still reflects the worst metric, while usage-only
+	// projection details are hidden in cards, the legend, and the metric table.
 	assertDashboardBrowser(t, ctx, `document.querySelector('[data-provider-id="claude"] .provider-status').textContent.trim() === '한도 임박'`)
 	assertDashboardBrowser(t, ctx, `(() => {
 		const metric = document.querySelector('[data-provider-id="claude"] [data-metric="weekly"]');
 		const projection = metric && metric.querySelector('.gauge-proj');
-		return projection && !projection.hidden && projection.classList.contains('overlay') && projection.classList.contains('weak');
+		return projection && projection.hidden
+			&& metric.querySelector('.metric-pace').hidden
+			&& metric.querySelector('.metric-projection').hidden;
+	})()`)
+	assertDashboardBrowser(t, ctx, `document.getElementById('overviewProjectionLegend').hidden`)
+	assertDashboardBrowser(t, ctx, `(() => {
+		const row = document.querySelector('#metricTableBody tr[data-provider="claude"][data-metric="weekly"]');
+		return row.querySelector('.table-gauge-proj').hidden
+			&& document.getElementById('metricPaceHeader').hidden
+			&& row.querySelector('.table-pace').hidden
+			&& document.getElementById('metricProjectionHeader').hidden
+			&& row.querySelector('.table-projection-cell').hidden;
+	})()`)
+
+	// When: the user switches back to usage mode.
+	if err := browserEvaluate(ctx, `document.getElementById('gaugeModeSwitch').click()`, nil); err != nil {
+		t.Fatalf("switch back to usage mode: %v", err)
+	}
+
+	// Then: pace, reset projection, and hatch details are restored.
+	assertDashboardBrowser(t, ctx, `(() => {
+		const metric = document.querySelector('[data-provider-id="claude"] [data-metric="weekly"]');
+		const row = document.querySelector('#metricTableBody tr[data-provider="claude"][data-metric="weekly"]');
+		return !metric.querySelector('.gauge-proj').hidden
+			&& !metric.querySelector('.metric-pace').hidden
+			&& !metric.querySelector('.metric-projection').hidden
+			&& !document.getElementById('overviewProjectionLegend').hidden
+			&& !row.querySelector('.table-gauge-proj').hidden
+			&& !document.getElementById('metricPaceHeader').hidden
+			&& !row.querySelector('.table-pace').hidden
+			&& !document.getElementById('metricProjectionHeader').hidden
+			&& !row.querySelector('.table-projection-cell').hidden;
 	})()`)
 }
 

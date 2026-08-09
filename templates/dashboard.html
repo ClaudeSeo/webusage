@@ -1,7 +1,7 @@
 {{define "content"}}
 {{/* The server supplies the first paint; subsequent renders use the public JSON APIs. */}}
 <main class="view" id="view-overview" data-view-panel="overview">
-    <div class="sec-head"><div><div class="sec-title">프로바이더 사용량</div><div class="sec-desc">지표별 게이지 · 빗금은 현재 페이스로 리셋 시점에 도달할 추정 구간</div></div><div class="right" id="overviewLegend"><span class="overview-legend"><span class="legend-hatch" style="background:repeating-linear-gradient(115deg, color-mix(in oklab, var(--fg) 30%, transparent) 0 3px, transparent 3px 7px)"></span>추정 도달 <span class="legend-hatch" style="background:color-mix(in oklab, var(--fg) 82%, transparent);margin-left:var(--space-3)"></span> <span id="overviewLegendCurrent">현재 사용량</span> <span style="display:inline-block;width:2px;height:11px;background:color-mix(in oklab, var(--fg) 34%, transparent);margin-left:var(--space-3)"></span> 한도 90% 선</span><span data-slot="badge" class="badge badge-outline" id="overviewStatus" hidden>SSR 데이터</span></div></div>
+    <div class="sec-head"><div><div class="sec-title">프로바이더 사용량</div><div class="sec-desc" id="overviewDescription">지표별 게이지 · 빗금은 현재 페이스로 리셋 시점에 도달할 추정 구간</div></div><div class="right" id="overviewLegend"><span class="overview-legend"><span id="overviewProjectionLegend"><span class="legend-hatch" style="background:repeating-linear-gradient(115deg, color-mix(in oklab, var(--fg) 30%, transparent) 0 3px, transparent 3px 7px)"></span>추정 도달</span> <span class="legend-hatch" style="background:color-mix(in oklab, var(--fg) 82%, transparent);margin-left:var(--space-3)"></span> <span id="overviewLegendCurrent">현재 사용량</span> <span style="display:inline-block;width:2px;height:11px;background:color-mix(in oklab, var(--fg) 34%, transparent);margin-left:var(--space-3)"></span> 한도 90% 선</span><span data-slot="badge" class="badge badge-outline" id="overviewStatus" hidden>SSR 데이터</span></div></div>
     <div class="card-grid" id="cardGrid">
         {{range .Providers}}
             <article class="provider-card interactive" data-slot="card" data-provider-id="{{.Name}}" data-provider-name="{{.Name}}" data-cycle-type="{{.CycleType}}" data-last-error="{{if .LastError}}true{{else}}false{{end}}"{{if not .Enabled}} hidden{{end}}>
@@ -28,10 +28,10 @@
 <main class="view" id="view-providers" data-view-panel="providers" hidden>
     <div class="sec-head"><div><div class="sec-title">지표 테이블</div><div class="sec-desc">활성 프로바이더의 모든 지표 · 열 제목을 눌러 정렬</div></div><div class="right"><span data-slot="badge" class="badge badge-outline" id="tableCount">—</span></div></div>
     <div data-slot="card"><div class="table-wrap"><table data-slot="table" id="metricTable"><thead><tr>
-        <th>프로바이더</th><th>지표</th><th>주기</th><th id="metricValueHeader" class="sortable cell-right" data-sort="used" data-gauge-label="usage" data-remaining-label="남음" aria-sort="none">사용</th><th id="metricPercentHeader" class="sortable" data-sort="pct" data-gauge-label="usage" data-remaining-label="남은 비율" aria-sort="none">사용률</th><th class="sortable cell-right" data-sort="pace" aria-sort="none">페이스<span class="sr-only">(시간당 추정)</span></th><th class="sortable cell-right" data-sort="reset" aria-sort="none">리셋까지</th><th class="sortable" data-sort="projection" aria-sort="none">추정 도달</th>
+        <th>프로바이더</th><th>지표</th><th>주기</th><th id="metricValueHeader" class="sortable cell-right" data-sort="used" data-gauge-label="usage" data-remaining-label="남음" aria-sort="none">사용</th><th id="metricPercentHeader" class="sortable" data-sort="pct" data-gauge-label="usage" data-remaining-label="남은 비율" aria-sort="none">사용률</th><th id="metricPaceHeader" class="sortable cell-right" data-sort="pace" aria-sort="none">페이스<span class="sr-only">(시간당 추정)</span></th><th class="sortable cell-right" data-sort="reset" aria-sort="none">리셋까지</th><th id="metricProjectionHeader" class="sortable" data-sort="projection" aria-sort="none">추정 도달</th>
     </tr></thead><tbody id="metricTableBody">
-        {{range .Providers}}{{ $provider := . }}{{range .Metrics}}<tr data-provider="{{$provider.Name}}" data-metric="{{.Name}}" data-used="{{.Used}}" data-limit="{{.Limit}}" data-pct="{{.Percent}}" data-pace="{{.PacePerHour}}" data-projection="{{.ProjectedPercent}}" data-reset="{{if not .ResetAt.IsZero}}{{.ResetAt.Unix}}{{else}}0{{end}}" data-label="{{.Label}}" data-weak-estimate="{{.WeakEstimate}}" data-severity="{{.Severity}}" data-has-projection="{{.HasProjection}}"{{if not $provider.Enabled}} hidden{{end}}><td class="cell-strong">{{$provider.Name}}</td><td class="num table-metric">{{.Label}}</td><td><span data-slot="badge" class="badge badge-outline">{{if .CycleLabel}}{{.CycleLabel}}{{else}}{{.CycleType}}{{end}}</span></td><td class="cell-right num"><span class="table-used">{{formatNumber .Used}}</span>{{if gt .Limit 0.0}}<span class="table-limit"> / {{formatNumber .Limit}}</span>{{end}}</td><td><div class="table-percent-cell"><span class="num table-percent table-percent-value" aria-label="{{if gt .Limit 0.0}}{{printf "%.1f" .Percent}}% 사용{{else}}—{{end}}">{{if gt .Limit 0.0}}{{printf "%.1f" .Percent}}%{{else}}—{{end}}</span>{{if gt .Limit 0.0}}<div class="mini-gauge"><div data-slot="gauge"><span class="table-gauge-proj gauge-proj{{if .WeakEstimate}} weak{{end}}" style="width:{{if .HasProjection}}{{if gt .ProjectedPercent 100.0}}100{{else}}{{.ProjectedPercent}}{{end}}{{else}}0{{end}}%;background:repeating-linear-gradient(115deg, color-mix(in oklab, {{hatchTone .Severity}} 30%, transparent) 0 3px, transparent 3px 7px)"></span><span class="table-gauge-fill gauge-fill{{if eq .Severity "warn"}} warn{{else if eq .Severity "danger"}} danger{{end}}" style="width:{{if gt .Percent 100.0}}100{{else}}{{.Percent}}{{end}}%"></span><span class="gauge-tick" style="left:90%"></span></div></div>{{end}}</div></td><td class="cell-right num table-pace" style="white-space:nowrap">{{if gt .PacePerHour 0.0}}{{formatNumber .PacePerHour}}{{else}}—{{end}}</td><td class="cell-right num">{{if .TimeRemaining}}{{.TimeRemaining}}{{else}}—{{end}}</td><td>{{if and (gt .Limit 0.0) .HasProjection}}<span data-slot="badge" class="badge table-projection {{if .WeakEstimate}}badge-outline weak{{else if eq .Severity "danger"}}badge-danger{{else if eq .Severity "warn"}}badge-warn{{else}}badge-secondary{{end}}"{{if .WeakEstimate}} title="관측 구간이 짧아 근거가 약한 추정"{{end}}>{{printf "%.1f" .ProjectedPercent}}%</span>{{else}}<span class="table-projection" style="color:var(--muted)">—</span>{{end}}</td></tr>{{end}}{{end}}
-    </tbody></table></div><div data-slot="card-footer">페이스와 추정 도달은 같은 주기 안의 최근 두 스냅샷 차이로 계산합니다. 관측 구간이 짧아 근거가 약한 추정은 흐리게 표시하고 상태 판정에서 제외합니다.</div></div>
+        {{range .Providers}}{{ $provider := . }}{{range .Metrics}}<tr data-provider="{{$provider.Name}}" data-metric="{{.Name}}" data-used="{{.Used}}" data-limit="{{.Limit}}" data-pct="{{.Percent}}" data-pace="{{.PacePerHour}}" data-projection="{{.ProjectedPercent}}" data-reset="{{if not .ResetAt.IsZero}}{{.ResetAt.Unix}}{{else}}0{{end}}" data-label="{{.Label}}" data-weak-estimate="{{.WeakEstimate}}" data-severity="{{.Severity}}" data-has-projection="{{.HasProjection}}"{{if not $provider.Enabled}} hidden{{end}}><td class="cell-strong">{{$provider.Name}}</td><td class="num table-metric">{{.Label}}</td><td><span data-slot="badge" class="badge badge-outline">{{if .CycleLabel}}{{.CycleLabel}}{{else}}{{.CycleType}}{{end}}</span></td><td class="cell-right num"><span class="table-used">{{formatNumber .Used}}</span>{{if gt .Limit 0.0}}<span class="table-limit"> / {{formatNumber .Limit}}</span>{{end}}</td><td><div class="table-percent-cell"><span class="num table-percent table-percent-value" aria-label="{{if gt .Limit 0.0}}{{printf "%.1f" .Percent}}% 사용{{else}}—{{end}}">{{if gt .Limit 0.0}}{{printf "%.1f" .Percent}}%{{else}}—{{end}}</span>{{if gt .Limit 0.0}}<div class="mini-gauge"><div data-slot="gauge"><span class="table-gauge-proj gauge-proj{{if .WeakEstimate}} weak{{end}}" style="width:{{if .HasProjection}}{{if gt .ProjectedPercent 100.0}}100{{else}}{{.ProjectedPercent}}{{end}}{{else}}0{{end}}%;background:repeating-linear-gradient(115deg, color-mix(in oklab, {{hatchTone .Severity}} 30%, transparent) 0 3px, transparent 3px 7px)"></span><span class="table-gauge-fill gauge-fill{{if eq .Severity "warn"}} warn{{else if eq .Severity "danger"}} danger{{end}}" style="width:{{if gt .Percent 100.0}}100{{else}}{{.Percent}}{{end}}%"></span><span class="gauge-tick" style="left:90%"></span></div></div>{{end}}</div></td><td class="cell-right num table-pace" style="white-space:nowrap">{{if gt .PacePerHour 0.0}}{{formatNumber .PacePerHour}}{{else}}—{{end}}</td><td class="cell-right num">{{if .TimeRemaining}}{{.TimeRemaining}}{{else}}—{{end}}</td><td class="table-projection-cell">{{if and (gt .Limit 0.0) .HasProjection}}<span data-slot="badge" class="badge table-projection {{if .WeakEstimate}}badge-outline weak{{else if eq .Severity "danger"}}badge-danger{{else if eq .Severity "warn"}}badge-warn{{else}}badge-secondary{{end}}"{{if .WeakEstimate}} title="관측 구간이 짧아 근거가 약한 추정"{{end}}>{{printf "%.1f" .ProjectedPercent}}%</span>{{else}}<span class="table-projection" style="color:var(--muted)">—</span>{{end}}</td></tr>{{end}}{{end}}
+    </tbody></table></div><div data-slot="card-footer" id="metricProjectionNote">페이스와 추정 도달은 같은 주기 안의 최근 두 스냅샷 차이로 계산합니다. 관측 구간이 짧아 근거가 약한 추정은 흐리게 표시하고 상태 판정에서 제외합니다.</div></div>
 </main>
 
 <main class="view" id="view-trends" data-view-panel="trends" hidden>
@@ -192,6 +192,7 @@
     }
 
     function applyGaugeMode() {
+        const usageMode = state.gaugeMode === 'usage';
         document.querySelectorAll('.metric-section').forEach(metric => {
             const used = Number(metric.dataset.used);
             const limit = Number(metric.dataset.limit);
@@ -206,6 +207,10 @@
             const projection = metric.querySelector('.gauge-proj');
             const value = metric.querySelector('.metric-display');
             const percentage = metric.querySelector('.metric-percent');
+            const pace = metric.querySelector('.metric-pace');
+            const projectionLabel = metric.querySelector('.metric-projection');
+            if (pace) pace.hidden = !usageMode;
+            if (projectionLabel) projectionLabel.hidden = !usageMode;
             if (gauge) gauge.hidden = !hasLimit;
             const metricRemainingWithoutLimit = state.gaugeMode === 'remaining' && !hasLimit;
             if (value && !hasLimit) value.innerHTML = metricRemainingWithoutLimit ? '—' : `<span class="num">${formatNumber(used)}</span>`;
@@ -239,11 +244,9 @@
                 const projected = Number.isFinite(projectedPercent) && projectedPercent > 0 ? projectedPercent : 0;
                 projection.style.width = `${Math.max(0, Math.min(100, state.gaugeMode === 'remaining' ? 100 - projected : projected))}%`;
                 projection.style.background = hatchGradient(metric.dataset.severity);
-                /* 약한 추정도 보여주되 흐리게(weak). 남은량 기준은 빗금이 채움 뒤에
-                   가려지므로 채움 위에 연하게 겹친다(overlay). */
-                projection.hidden = metric.dataset.hasProjection !== 'true';
+                /* Usage mode keeps weak projections visible but dimmed. */
+                projection.hidden = !usageMode || metric.dataset.hasProjection !== 'true';
                 projection.classList.toggle('weak', metric.dataset.weakEstimate === 'true');
-                projection.classList.toggle('overlay', state.gaugeMode === 'remaining');
             }
             if (fill) { fill.style.width = `${Math.max(0, Math.min(100, percent))}%`; fill.classList.toggle('warn', metric.dataset.severity === 'warn'); fill.classList.toggle('danger', metric.dataset.severity === 'danger'); }
             if (value) value.innerHTML = `<span class="num">${formatNumber(state.gaugeMode === 'remaining' ? Math.max(0, remaining) : used)}</span> <span class="of">/ <span class="num">${formatNumber(limit)}</span></span>`;
@@ -262,7 +265,11 @@
             const gauge = row.querySelector('.mini-gauge');
             const fill = row.querySelector('.table-gauge-fill');
             const projection = row.querySelector('.table-gauge-proj');
+            const pace = row.querySelector('.table-pace');
+            const projectionCell = row.querySelector('.table-projection-cell');
             row.dataset.gaugeMode = state.gaugeMode;
+            if (pace) pace.hidden = !usageMode;
+            if (projectionCell) projectionCell.hidden = !usageMode;
             if (gauge) gauge.hidden = !hasLimit;
             const remainingWithoutLimit = state.gaugeMode === 'remaining' && !hasLimit;
             if (remainingWithoutLimit) {
@@ -296,10 +303,9 @@
                 const projected = Number.isFinite(projectedPercent) && projectedPercent > 0 ? projectedPercent : 0;
                 projection.style.width = `${Math.max(0, Math.min(100, state.gaugeMode === 'remaining' ? 100 - projected : projected))}%`;
                 projection.style.background = hatchGradient(row.dataset.severity);
-                /* 카드와 동일: 약한 추정도 보이되 흐리게, 남은량은 overlay. */
-                projection.hidden = row.dataset.hasProjection !== 'true';
+                /* Match the card gauge by dimming weak projections in usage mode. */
+                projection.hidden = !usageMode || row.dataset.hasProjection !== 'true';
                 projection.classList.toggle('weak', row.dataset.weakEstimate === 'true');
-                projection.classList.toggle('overlay', state.gaugeMode === 'remaining');
             }
             if (value) value.textContent = formatNumber(state.gaugeMode === 'remaining' ? Math.max(0, remaining) : used);
             const limitLabel = row.querySelector('.table-limit');
@@ -328,6 +334,12 @@
             setSortableHeaderLabel(metricPercentHeader, state.gaugeMode === 'remaining' ? metricPercentHeader.dataset.remainingLabel : '사용률');
             metricPercentHeader.dataset.gaugeMode = state.gaugeMode;
         }
+        const metricPaceHeader = document.getElementById('metricPaceHeader');
+        const metricProjectionHeader = document.getElementById('metricProjectionHeader');
+        const metricProjectionNote = document.getElementById('metricProjectionNote');
+        if (metricPaceHeader) metricPaceHeader.hidden = !usageMode;
+        if (metricProjectionHeader) metricProjectionHeader.hidden = !usageMode;
+        if (metricProjectionNote) metricProjectionNote.hidden = !usageMode;
         const switchElement = document.getElementById('gaugeModeSwitch');
         if (switchElement) switchElement.setAttribute('aria-checked', String(state.gaugeMode === 'usage'));
         const name = document.getElementById('gaugeModeName');
@@ -336,6 +348,12 @@
         if (description) description.textContent = state.gaugeMode === 'usage' ? '쓴 만큼 채워집니다' : '남은 만큼 채워집니다';
         const legendCurrent = document.getElementById('overviewLegendCurrent');
         if (legendCurrent) legendCurrent.textContent = state.gaugeMode === 'usage' ? '현재 사용량' : '현재 남은량';
+        const projectionLegend = document.getElementById('overviewProjectionLegend');
+        if (projectionLegend) projectionLegend.hidden = !usageMode;
+        const overviewDescription = document.getElementById('overviewDescription');
+        if (overviewDescription) overviewDescription.textContent = usageMode
+            ? '지표별 게이지 · 빗금은 현재 페이스로 리셋 시점에 도달할 추정 구간'
+            : '지표별 남은량과 실제 리셋 시점을 표시합니다';
     }
 
     // The badge must be rewritten on every refresh, not only when collection
