@@ -3,6 +3,7 @@ package store
 import (
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"time"
 )
 
@@ -125,7 +126,7 @@ func (s *Store) ListProviders() ([]*Provider, error) {
 	rows, err := s.db.Query(`
 		SELECT id, name, enabled, config_json, last_run, last_error, created_at, updated_at
 		FROM providers
-		ORDER BY name
+		ORDER BY display_order IS NULL, display_order, name
 	`)
 	if err != nil {
 		return nil, err
@@ -157,6 +158,38 @@ func (s *Store) ListProviders() ([]*Provider, error) {
 	}
 
 	return providers, rows.Err()
+}
+
+// SaveProviderOrder persists the display order for every submitted provider
+// name. The caller must validate that each provider is submitted exactly once;
+// the whole write happens in a single transaction.
+func (s *Store) SaveProviderOrder(orderedNames []string) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return fmt.Errorf("beginning provider order transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	statement, err := tx.Prepare(`
+		UPDATE providers
+		SET display_order = ?, updated_at = CURRENT_TIMESTAMP
+		WHERE name = ?
+	`)
+	if err != nil {
+		return fmt.Errorf("preparing provider order update: %w", err)
+	}
+	defer func() { _ = statement.Close() }()
+
+	for index, name := range orderedNames {
+		if _, err := statement.Exec(index, name); err != nil {
+			return fmt.Errorf("saving provider order for %q: %w", name, err)
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("committing provider order: %w", err)
+	}
+	return nil
 }
 
 // UpdateProviderStatus updates the last run time and error status

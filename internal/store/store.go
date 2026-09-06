@@ -76,7 +76,8 @@ func initSchema(db *sql.DB) error {
 		last_run DATETIME,
 		last_error TEXT,
 		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-		updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+		display_order INTEGER
 	);
 
 	CREATE TABLE IF NOT EXISTS usage_snapshots (
@@ -110,6 +111,46 @@ func initSchema(db *sql.DB) error {
 		return fmt.Errorf("creating schema: %w", err)
 	}
 
+	if err := ensureProviderDisplayOrder(db); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// ensureProviderDisplayOrder adds the provider display_order column to
+// databases created before provider ordering existed. NULL stays the marker
+// for "no saved order", so legacy rows keep their alphabetical behavior until
+// a new order is saved.
+func ensureProviderDisplayOrder(db *sql.DB) error {
+	rows, err := db.Query(`PRAGMA table_info(providers)`)
+	if err != nil {
+		return fmt.Errorf("inspecting providers table: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	hasDisplayOrder := false
+	for rows.Next() {
+		var cid int
+		var name, columnType string
+		var notNull, pk int
+		var defaultValue interface{}
+		if err := rows.Scan(&cid, &name, &columnType, &notNull, &defaultValue, &pk); err != nil {
+			return fmt.Errorf("scanning providers table info: %w", err)
+		}
+		if name == "display_order" {
+			hasDisplayOrder = true
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("iterating providers table info: %w", err)
+	}
+	if hasDisplayOrder {
+		return nil
+	}
+	if _, err := db.Exec(`ALTER TABLE providers ADD COLUMN display_order INTEGER`); err != nil {
+		return fmt.Errorf("adding display_order column: %w", err)
+	}
 	return nil
 }
 

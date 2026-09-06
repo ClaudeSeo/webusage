@@ -710,6 +710,7 @@ func (s *Server) setupRoutes() {
 	s.mux.HandleFunc("/api/providers", s.handleAPIProvidersMeta)
 	s.mux.HandleFunc("/api/providers/", s.handleProviderAction)
 	s.mux.HandleFunc("/api/metric-preferences", s.handleMetricPreferences)
+	s.mux.HandleFunc("/api/provider-order", s.handleProviderOrder)
 	s.mux.HandleFunc("/api/heatmap", s.handleAPIHeatmap)
 	s.mux.HandleFunc("/api/activity", s.handleAPIActivity)
 	s.mux.HandleFunc("/api/collect", s.handleCollect)
