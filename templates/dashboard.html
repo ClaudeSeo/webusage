@@ -515,6 +515,13 @@
     }
 
     function tableSortValue(row, key) {
+        if (key === 'provider') {
+            /* The default sort must follow the saved provider order, not the raw name;
+               missing values stay equal so the stable sort preserves the SSR sequence. */
+            if (!state.providers.length) return null;
+            const index = state.providers.findIndex(provider => (provider.provider_id || provider.name) === row.dataset.provider);
+            return index >= 0 ? index : null;
+        }
         if (key === 'used' || key === 'pct') {
             const limit = Number(row.dataset.limit);
             if (!Number.isFinite(limit) || limit <= 0) return null;
@@ -828,11 +835,15 @@
 
     /* Settings drawer and provider actions use server state, not prototype fixtures. */
     let drawerProviderMetadata = new Map();
+    let providerOrder = [];
+    let providerOrderSaving = false;
     let metricPreferenceSource = [];
     let metricPreferenceDraft = [];
     let metricPreferenceSaving = false;
     let metricPreferenceConflict = false;
     let draggedMetricPreference = null;
+    let draggedProviderOrder = null;
+    function moveOrderIcon(href) { const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg'); svg.setAttribute('class', 'icon'); svg.setAttribute('viewBox', '0 0 24 24'); svg.setAttribute('fill', 'none'); svg.setAttribute('stroke', 'currentColor'); svg.setAttribute('stroke-width', '1.8'); svg.setAttribute('stroke-linecap', 'round'); const use = document.createElementNS('http://www.w3.org/2000/svg', 'use'); use.setAttribute('href', href); svg.appendChild(use); return svg; }
 
     function cloneMetricPreferenceProviders(providers) {
         return (providers || []).map(provider => ({ provider_id: String(provider.provider_id || ''), version: Number(provider.version || 0), items: (provider.items || []).map(item => ({ metric: String(item.metric || ''), label: String(item.label || item.metric || ''), visible: Boolean(item.visible), available: Boolean(item.available) })) }));
@@ -867,9 +878,8 @@
         const label = document.createElement('span'); label.className = 'metric-preference-label nm'; const labelText = document.createElement('span'); labelText.textContent = item.label; const keyText = document.createElement('code'); keyText.className = 'metric-preference-key'; keyText.textContent = item.metric; label.append(labelText, keyText); row.appendChild(label);
         const toggle = document.createElement('button'); toggle.type = 'button'; toggle.className = 'metric-preference-toggle'; toggle.setAttribute('data-slot', 'switch'); toggle.setAttribute('role', 'switch'); toggle.setAttribute('aria-checked', String(item.visible)); toggle.setAttribute('aria-label', item.label + ' 표시'); toggle.addEventListener('click', () => { const visible = toggle.getAttribute('aria-checked') !== 'true'; toggle.setAttribute('aria-checked', String(visible)); row.classList.toggle('off', !visible); toggleMetricPreference(provider.provider_id, item.metric, visible); });
         const order = document.createElement('span'); order.className = 'pref-order';
-        const moveIcon = href => { const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg'); svg.setAttribute('class', 'icon'); svg.setAttribute('viewBox', '0 0 24 24'); svg.setAttribute('fill', 'none'); svg.setAttribute('stroke', 'currentColor'); svg.setAttribute('stroke-width', '1.8'); svg.setAttribute('stroke-linecap', 'round'); const use = document.createElementNS('http://www.w3.org/2000/svg', 'use'); use.setAttribute('href', href); svg.appendChild(use); return svg; };
-        const upButton = document.createElement('button'); upButton.type = 'button'; upButton.setAttribute('data-slot', 'button'); upButton.className = 'metric-preference-move btn btn-ghost btn-icon btn-sm'; upButton.appendChild(moveIcon('#i-up')); upButton.disabled = position === 0; upButton.setAttribute('aria-label', item.label + ' 위로'); upButton.addEventListener('click', () => moveMetricPreference(provider.provider_id, item.metric, -1)); order.appendChild(upButton);
-        const downButton = document.createElement('button'); downButton.type = 'button'; downButton.setAttribute('data-slot', 'button'); downButton.className = 'metric-preference-move btn btn-ghost btn-icon btn-sm'; downButton.appendChild(moveIcon('#i-down')); downButton.disabled = position === total - 1; downButton.setAttribute('aria-label', item.label + ' 아래로'); downButton.addEventListener('click', () => moveMetricPreference(provider.provider_id, item.metric, 1)); order.appendChild(downButton); row.append(order, toggle); row.append(order, toggle);
+        const upButton = document.createElement('button'); upButton.type = 'button'; upButton.setAttribute('data-slot', 'button'); upButton.className = 'metric-preference-move btn btn-ghost btn-icon btn-sm'; upButton.appendChild(moveOrderIcon('#i-up')); upButton.disabled = position === 0; upButton.setAttribute('aria-label', item.label + ' 위로'); upButton.addEventListener('click', () => moveMetricPreference(provider.provider_id, item.metric, -1)); order.appendChild(upButton);
+        const downButton = document.createElement('button'); downButton.type = 'button'; downButton.setAttribute('data-slot', 'button'); downButton.className = 'metric-preference-move btn btn-ghost btn-icon btn-sm'; downButton.appendChild(moveOrderIcon('#i-down')); downButton.disabled = position === total - 1; downButton.setAttribute('aria-label', item.label + ' 아래로'); downButton.addEventListener('click', () => moveMetricPreference(provider.provider_id, item.metric, 1)); order.appendChild(downButton); row.append(order, toggle); row.append(order, toggle);
         row.addEventListener('dragstart', () => { draggedMetricPreference = { providerId: provider.provider_id, metric: item.metric }; row.classList.add('dragging'); }); row.addEventListener('dragend', () => { draggedMetricPreference = null; row.classList.remove('dragging'); }); row.addEventListener('dragover', event => event.preventDefault()); row.addEventListener('drop', event => { event.preventDefault(); if (draggedMetricPreference && draggedMetricPreference.providerId === provider.provider_id) reorderMetricPreference(provider.provider_id, draggedMetricPreference.metric, item.metric); }); return row;
     }
 
@@ -879,11 +889,11 @@
     function reorderMetricPreference(providerId, sourceMetric, targetMetric) { if (sourceMetric === targetMetric) return; const provider = findMetricPreferenceProvider(providerId); if (!provider) return; const availableIndexes = provider.items.map((item, index) => item.available ? index : -1).filter(index => index >= 0); const availableItems = availableIndexes.map(index => provider.items[index]); const sourceIndex = availableItems.findIndex(item => item.metric === sourceMetric); const targetIndex = availableItems.findIndex(item => item.metric === targetMetric); if (sourceIndex < 0 || targetIndex < 0) return; const moved = availableItems.splice(sourceIndex, 1)[0]; availableItems.splice(targetIndex, 0, moved); availableIndexes.forEach((slot, index) => { provider.items[slot] = availableItems[index]; }); clearMetricPreferenceError(); renderMetricPreferenceProviders(); announceMetricPreference(`${moved.label} 순서를 변경했습니다.`); focusMetricPreferenceRow(providerId, sourceMetric); }
     function toggleMetricPreference(providerId, metric, visible) { const provider = findMetricPreferenceProvider(providerId); if (!provider) return; const item = provider.items.find(candidate => candidate.metric === metric && candidate.available); if (!item) return; const visibleCount = provider.items.filter(candidate => candidate.available && candidate.visible).length; if (!visible && item.visible && visibleCount <= 1) { showMetricPreferenceError('최소 한 개의 사용량 항목은 표시해야 합니다.', false); announceMetricPreference('마지막 표시 항목은 숨길 수 없습니다.'); renderMetricPreferenceProviders(); focusMetricPreferenceRow(providerId, metric); return; } item.visible = visible; clearMetricPreferenceError(); updateMetricPreferenceButtons(); announceMetricPreference(`${item.label} 표시 설정을 변경했습니다.`); }
     function cancelMetricPreferenceChanges() { metricPreferenceDraft = cloneMetricPreferenceProviders(metricPreferenceSource); metricPreferenceConflict = false; clearMetricPreferenceError(); renderMetricPreferenceProviders(); announceMetricPreference('저장하지 않은 변경을 취소했습니다.'); }
-    function updateMetricPreferenceButtons() { const saveButton = document.getElementById('metricPreferenceSaveButton'); const cancelButton = document.getElementById('metricPreferenceCancelButton'); if (saveButton) saveButton.disabled = metricPreferenceSaving || !metricPreferenceHasChanges(); if (cancelButton) cancelButton.disabled = metricPreferenceSaving || !metricPreferenceHasChanges(); const stateLabel = document.getElementById('prefState'); if (stateLabel) stateLabel.textContent = metricPreferenceHasChanges() ? '저장하지 않은 변경 사항' : '변경 사항 없음'; }
-
+    function updateMetricPreferenceButtons() { const saveButton = document.getElementById('metricPreferenceSaveButton'); const cancelButton = document.getElementById('metricPreferenceCancelButton'); const hasChanges = metricPreferenceHasChanges(); if (saveButton) saveButton.disabled = metricPreferenceSaving || !hasChanges; if (cancelButton) cancelButton.disabled = metricPreferenceSaving || !hasChanges; const stateLabel = document.getElementById('prefState'); if (stateLabel) stateLabel.textContent = hasChanges ? '저장하지 않은 변경 사항' : '변경 사항 없음'; }
     async function saveMetricPreferences() {
         if (metricPreferenceSaving) return; const sourceByProvider = new Map(metricPreferenceSource.map(provider => [provider.provider_id, provider])); const changedProviders = metricPreferenceDraft.filter(provider => { const source = sourceByProvider.get(provider.provider_id); return JSON.stringify(metricPreferenceComparable([provider])) !== JSON.stringify(metricPreferenceComparable(source ? [source] : [])); }); if (!changedProviders.length) { announceMetricPreference('저장할 변경이 없습니다.'); return; }
-        metricPreferenceSaving = true; updateMetricPreferenceButtons(); clearMetricPreferenceError(); const payload = { providers: changedProviders.map(provider => ({ provider_id: provider.provider_id, expected_version: provider.version, items: provider.items.map(item => ({ metric: item.metric, visible: item.visible })) })) };
+        const payload = { providers: changedProviders.map(provider => ({ provider_id: provider.provider_id, expected_version: provider.version, items: provider.items.map(item => ({ metric: item.metric, visible: item.visible })) })) };
+        metricPreferenceSaving = true; updateMetricPreferenceButtons(); clearMetricPreferenceError();
         try { const response = await fetch('/api/metric-preferences', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }); const data = await response.json().catch(() => ({})); if (response.status === 409) { metricPreferenceConflict = true; showMetricPreferenceError('다른 곳에서 설정이 변경되었습니다. 현재 draft는 유지됩니다.', true); return; } if (!response.ok) { showMetricPreferenceError('설정을 저장하지 못했습니다. 항목을 확인한 뒤 다시 시도해 주세요.', false); return; } window.location.reload(); }
         catch (error) { showMetricPreferenceError('네트워크 오류로 설정을 저장하지 못했습니다. 현재 draft는 유지됩니다.', false); }
         finally { metricPreferenceSaving = false; updateMetricPreferenceButtons(); }
@@ -891,13 +901,40 @@
     function loadLatestMetricPreferences() { if (!metricPreferenceConflict) return; loadMetricPreferences(); }
 
     async function loadDrawerProviders() {
-        try { const response = await fetch('/api/providers'); if (!response.ok) throw new Error('providers API 실패'); const data = await response.json(); const providers = data.providers || []; drawerProviderMetadata = new Map(providers.map(provider => [provider.provider_id || provider.name, provider])); renderDrawerProviders(providers); renderMetricPreferenceProviders(); }
+        try { const response = await fetch('/api/providers'); if (!response.ok) throw new Error('providers API 실패'); const data = await response.json(); const providers = data.providers || []; drawerProviderMetadata = new Map(providers.map(provider => [provider.provider_id || provider.name, provider])); providerOrder = providers.map(provider => provider.provider_id || provider.name); renderDrawerProviders(); renderMetricPreferenceProviders(); }
         catch (error) { document.getElementById('drawerProviderCards').textContent = 'Provider 목록을 불러올 수 없습니다.'; }
     }
 
-    function renderDrawerProviders(providers) {
-        const container = document.getElementById('drawerProviderCards'); container.replaceChildren(); if (!providers.length) { container.textContent = '등록된 Provider가 없습니다.'; return; }
-        providers.forEach(provider => { const name = provider.provider_id || provider.name; const displayName = provider.display_name || name; const card = document.createElement('div'); card.className = 'set-row drawer-provider-card'; const info = document.createElement('div'); info.className = 'grow'; const title = document.createElement('div'); title.className = 'set-row-name drawer-provider-name'; title.textContent = displayName; const meta = document.createElement('div'); meta.className = 'set-row-desc drawer-provider-meta'; const auth = provider.auth_method || '인증 정보 없음'; const updated = provider.last_updated ? `마지막 수집 ${formatDateTime(provider.last_updated)}` : '최근 수집 없음'; meta.textContent = `${auth} · ${updated}`; info.append(title, meta); const button = document.createElement('button'); button.type = 'button'; button.className = 'drawer-provider-switch'; button.setAttribute('data-slot', 'switch'); button.setAttribute('role', 'switch'); button.setAttribute('aria-checked', String(Boolean(provider.enabled))); button.setAttribute('aria-label', `${displayName} ${provider.enabled ? '비활성화' : '활성화'}`); button.id = `drawer-btn-${name}`; button.textContent = provider.enabled ? '비활성화' : '활성화'; button.addEventListener('click', () => toggleProviderInDrawer(name, provider.enabled ? 'disable' : 'enable')); card.append(info, button); container.appendChild(card); });
+    function focusProviderOrderCard(name) { const card = Array.from(document.querySelectorAll('#drawerProviderCards .drawer-provider-card')).find(candidate => candidate.dataset.providerName === name); if (card) card.focus(); }
+    function moveProviderOrder(name, direction) { const from = providerOrder.indexOf(name); const to = from + direction; if (from < 0 || to < 0 || to >= providerOrder.length) return; const previousOrder = [...providerOrder]; [providerOrder[from], providerOrder[to]] = [providerOrder[to], providerOrder[from]]; renderDrawerProviders(); announce('프로바이더 순서를 변경했습니다.'); persistProviderOrder(previousOrder, name); }
+    function reorderProviderOrder(sourceName, targetName) { if (sourceName === targetName || providerOrderSaving) return; const from = providerOrder.indexOf(sourceName); const to = providerOrder.indexOf(targetName); if (from < 0 || to < 0) return; const previousOrder = [...providerOrder]; providerOrder.splice(from, 1); providerOrder.splice(to, 0, sourceName); renderDrawerProviders(); announce('프로바이더 순서를 변경했습니다.'); persistProviderOrder(previousOrder, sourceName); }
+    /* Provider order saves immediately per move: the swap renders first, the
+       full list PUTs next, and a failed save reverts the rendered swap. The
+       metric editor footer stays metric-only and is never touched here. */
+    async function persistProviderOrder(previousOrder, movedName) {
+        if (providerOrderSaving) return;
+        providerOrderSaving = true; renderDrawerProviders();
+        const nextOrder = [...providerOrder];
+        let saved = false;
+        try {
+            const response = await fetch('/api/provider-order', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ provider_ids: nextOrder }) });
+            if (!response.ok) throw new Error('provider order API 실패');
+            saved = true;
+            showToast('프로바이더 순서를 저장했습니다', `${movedName} 순서를 테이블에 반영했습니다.`);
+            await loadProviders();
+            renderProviderTable();
+        } catch (error) {
+            if (saved) { showToast('프로바이더 순서를 저장했지만 화면 갱신에 실패했습니다', sanitizeError(error && error.message)); }
+            else { providerOrder = [...previousOrder]; showToast('프로바이더 순서를 저장하지 못했습니다', sanitizeError(error && error.message)); }
+        } finally {
+            providerOrderSaving = false;
+            renderDrawerProviders();
+            focusProviderOrderCard(movedName);
+        }
+    }
+    function renderDrawerProviders() {
+        const container = document.getElementById('drawerProviderCards'); container.replaceChildren(); if (!providerOrder.length) { container.textContent = '등록된 Provider가 없습니다.'; return; }
+        providerOrder.forEach((name, position) => { const provider = drawerProviderMetadata.get(name) || {}; const displayName = provider.display_name || name; const card = document.createElement('div'); card.className = 'set-row drawer-provider-card'; card.draggable = true; card.tabIndex = -1; card.dataset.providerName = name; const handle = document.createElement('button'); handle.type = 'button'; handle.className = 'metric-preference-drag-handle'; handle.textContent = '⋮⋮'; handle.setAttribute('aria-label', displayName + ' 끌어서 순서 변경'); card.appendChild(handle); const info = document.createElement('div'); info.className = 'grow'; const title = document.createElement('div'); title.className = 'set-row-name drawer-provider-name'; title.textContent = displayName; const meta = document.createElement('div'); meta.className = 'set-row-desc drawer-provider-meta'; const auth = provider.auth_method || '인증 정보 없음'; const updated = provider.last_updated ? `마지막 수집 ${formatDateTime(provider.last_updated)}` : '최근 수집 없음'; meta.textContent = `${auth} · ${updated}`; info.append(title, meta); const order = document.createElement('span'); order.className = 'pref-order'; const upButton = document.createElement('button'); upButton.type = 'button'; upButton.setAttribute('data-slot', 'button'); upButton.className = 'metric-preference-move btn btn-ghost btn-icon btn-sm'; upButton.appendChild(moveOrderIcon('#i-up')); upButton.disabled = position === 0 || providerOrderSaving; upButton.setAttribute('aria-label', displayName + ' 위로'); upButton.addEventListener('click', () => moveProviderOrder(name, -1)); order.appendChild(upButton); const downButton = document.createElement('button'); downButton.type = 'button'; downButton.setAttribute('data-slot', 'button'); downButton.className = 'metric-preference-move btn btn-ghost btn-icon btn-sm'; downButton.appendChild(moveOrderIcon('#i-down')); downButton.disabled = position === providerOrder.length - 1 || providerOrderSaving; downButton.setAttribute('aria-label', displayName + ' 아래로'); downButton.addEventListener('click', () => moveProviderOrder(name, 1)); order.appendChild(downButton); const button = document.createElement('button'); button.type = 'button'; button.className = 'drawer-provider-switch'; button.setAttribute('data-slot', 'switch'); button.setAttribute('role', 'switch'); button.setAttribute('aria-checked', String(Boolean(provider.enabled))); button.setAttribute('aria-label', `${displayName} ${provider.enabled ? '비활성화' : '활성화'}`); button.id = `drawer-btn-${name}`; button.textContent = provider.enabled ? '비활성화' : '활성화'; button.addEventListener('click', () => toggleProviderInDrawer(name, provider.enabled ? 'disable' : 'enable')); card.append(info, order, button); card.addEventListener('dragstart', () => { draggedProviderOrder = name; card.classList.add('dragging'); }); card.addEventListener('dragend', () => { draggedProviderOrder = null; card.classList.remove('dragging'); }); card.addEventListener('dragover', event => event.preventDefault()); card.addEventListener('drop', event => { event.preventDefault(); if (draggedProviderOrder && !providerOrderSaving) reorderProviderOrder(draggedProviderOrder, name); }); container.appendChild(card); });
     }
 
     async function toggleProviderInDrawer(name, action) {

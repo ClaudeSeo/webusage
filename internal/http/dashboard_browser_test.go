@@ -547,6 +547,46 @@ func TestDashboardBrowserAcceptance(t *testing.T) {
 		t.Fatalf("cancel staged metric preference: %v", err)
 	}
 	assertDashboardBrowser(t, ctx, `document.querySelector('#metricPreferenceSaveButton').disabled && document.querySelector('#prefState').textContent === '변경 사항 없음'`)
+	// Provider order is a per-section immediate save: each move PUTs
+	// /api/provider-order right away and re-renders the drawer, while the
+	// metric editor footer (save/cancel/prefState) stays metric-only.
+	var drawerOrderBefore string
+	if err := browserEvaluate(ctx, `Array.from(document.querySelectorAll('#drawerProviderCards .drawer-provider-card')).map(card => card.dataset.providerName).join('|')`, &drawerOrderBefore); err != nil {
+		t.Fatalf("read seeded drawer provider order: %v", err)
+	}
+	if drawerOrderBefore != "claude|disabled|kirocli" {
+		t.Fatalf("unexpected seeded drawer provider order: %q", drawerOrderBefore)
+	}
+	if err := browserDOMClick(ctx, `#drawerProviderCards .drawer-provider-card[data-provider-name="claude"] [aria-label$="아래로"]`); err != nil {
+		t.Fatalf("move provider down in drawer: %v", err)
+	}
+	if err := waitDashboardBrowser(ctx, `Array.from(document.querySelectorAll('#drawerProviderCards .drawer-provider-card')).map(card => card.dataset.providerName).join('|') === 'disabled|claude|kirocli'`); err != nil {
+		t.Fatalf("provider down move did not re-render the drawer: %v", err)
+	}
+	// Move controls stay disabled while the first save is in flight and must
+	// come back before the next move is accepted.
+	if err := waitDashboardBrowser(ctx, `!document.querySelector('#drawerProviderCards .drawer-provider-card[data-provider-name="kirocli"] [aria-label$="위로"]').disabled`); err != nil {
+		t.Fatalf("provider move controls did not re-enable after save: %v", err)
+	}
+	if err := browserDOMClick(ctx, `#drawerProviderCards .drawer-provider-card[data-provider-name="kirocli"] [aria-label$="위로"]`); err != nil {
+		t.Fatalf("move provider up in drawer: %v", err)
+	}
+	if err := waitDashboardBrowser(ctx, `Array.from(document.querySelectorAll('#drawerProviderCards .drawer-provider-card')).map(card => card.dataset.providerName).join('|') === 'disabled|kirocli|claude'`); err != nil {
+		t.Fatalf("provider up move did not re-render the drawer: %v", err)
+	}
+	if err := waitDashboardBrowser(ctx, `performance.getEntriesByType('resource').filter(entry => entry.name.includes('/api/provider-order')).length === 2`); err != nil {
+		var putState string
+		_ = browserEvaluate(ctx, `JSON.stringify({order: Array.from(document.querySelectorAll('#drawerProviderCards .drawer-provider-card')).map(card => card.dataset.providerName), puts: performance.getEntriesByType('resource').filter(entry => entry.name.includes('/api/provider-order')).map(entry => entry.initiatorType + ' ' + entry.name)})`, &putState)
+		t.Fatalf("provider moves did not issue immediate provider-order PUTs: %v (state=%s)", err, putState)
+	}
+	assertDashboardBrowser(t, ctx, `(() => {
+		const firstCard = document.querySelector('#drawerProviderCards .drawer-provider-card[data-provider-name="disabled"]');
+		const lastCard = document.querySelector('#drawerProviderCards .drawer-provider-card[data-provider-name="claude"]');
+		return document.querySelector('#prefState').textContent === '변경 사항 없음' &&
+			document.querySelector('#metricPreferenceSaveButton').disabled && document.querySelector('#metricPreferenceCancelButton').disabled &&
+			firstCard && firstCard.querySelector('.metric-preference-move[aria-label$="위로"]').disabled &&
+			lastCard && lastCard.querySelector('.metric-preference-move[aria-label$="아래로"]').disabled;
+	})()`)
 
 	// Enable and disable the previously disabled provider without reloading.
 	if err := browserDOMClick(ctx, "#drawer-btn-disabled"); err != nil {
@@ -600,6 +640,16 @@ func TestDashboardBrowserAcceptance(t *testing.T) {
 		var reloadState string
 		_ = browserEvaluate(ctx, `JSON.stringify({marker:performance.timeOrigin,ready:document.readyState,url:location.href,card:Boolean(document.querySelector('#cardGrid')),gauge:Boolean(document.querySelector('#gaugeModeSwitch')),save:document.querySelector('#metricPreferenceSaveButton')?.disabled})`, &reloadState)
 		t.Fatalf("dashboard did not reload after saving preferences: %v (state=%s)", err, reloadState)
+	}
+	// The per-move provider order PUTs are server state, so the reloaded
+	// dashboard must come back in the saved drawer order.
+	if err := browserDOMClick(ctx, "#settingsBtn"); err != nil {
+		t.Fatalf("reopen settings for provider order persistence: %v", err)
+	}
+	if err := waitDashboardBrowser(ctx, `document.querySelector('#settingsDrawer').classList.contains('open') && Array.from(document.querySelectorAll('#drawerProviderCards .drawer-provider-card')).map(card => card.dataset.providerName).join('|') === 'disabled|kirocli|claude'`); err != nil {
+		var persistedState string
+		_ = browserEvaluate(ctx, `JSON.stringify({order: Array.from(document.querySelectorAll('#drawerProviderCards .drawer-provider-card')).map(card => card.dataset.providerName)})`, &persistedState)
+		t.Fatalf("provider order did not persist across reload: %v (state=%s)", err, persistedState)
 	}
 
 	// Restore a complete UI state from localStorage, then prove a denied
