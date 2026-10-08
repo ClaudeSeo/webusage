@@ -316,6 +316,40 @@ func TestStore_CreateUsageSnapshots_Batch(t *testing.T) {
 	}
 }
 
+func TestGetLatestUsageByProviderShouldOmitMetricsMissingFromLatestCollection(t *testing.T) {
+	store, cleanup := setupTestStore(t)
+	defer cleanup()
+
+	// Given: an earlier collection reported session, weekly and cost, and the
+	// latest collection reported only session and weekly.
+	providerID := mustCreateStoreTestProvider(t, store)
+	earlier := time.Now().UTC().Add(-time.Hour).Truncate(time.Second)
+	latest := earlier.Add(15 * time.Minute)
+	mustCreateStoreTestSnapshots(t, store, []*UsageSnapshot{
+		{ProviderID: providerID, Metric: "cost", Used: 1.5, CollectedAt: earlier},
+		{ProviderID: providerID, Metric: "session", Used: 10, CollectedAt: earlier},
+		{ProviderID: providerID, Metric: "weekly", Used: 40, CollectedAt: earlier},
+		{ProviderID: providerID, Metric: "session", Used: 25, CollectedAt: latest},
+		{ProviderID: providerID, Metric: "weekly", Used: 52, CollectedAt: latest},
+	})
+
+	// When
+	snapshots, err := store.GetLatestUsageByProvider(providerID)
+	if err != nil {
+		t.Fatalf("GetLatestUsageByProvider: %v", err)
+	}
+
+	// Then: the retired cost is left out and the reported metrics carry their
+	// latest values.
+	got := make(map[string]float64, len(snapshots))
+	for _, snap := range snapshots {
+		got[snap.Metric] = snap.Used
+	}
+	if len(got) != 2 || got["session"] != 25 || got["weekly"] != 52 {
+		t.Errorf("latest = %v, want only session=25 and weekly=52", got)
+	}
+}
+
 func TestStore_GetUsageTrends(t *testing.T) {
 	store, cleanup := setupTestStore(t)
 	defer cleanup()

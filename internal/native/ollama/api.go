@@ -10,18 +10,24 @@ import (
 	"time"
 )
 
-// usageEndpoint is the Ollama Cloud usage endpoint. It is fixed rather than
-// configurable: the API key is account-scoped to ollama.com, so a redirectable
-// host would only widen where that credential can be sent.
-const usageEndpoint = "https://ollama.com/api/usage"
+// balanceEndpoint and usageEndpoint are the Ollama Cloud account endpoints.
+// They are fixed rather than configurable: the API key is account-scoped to
+// ollama.com, so a redirectable host would only widen where that credential
+// can be sent. usageEndpoint pins range=30d because the API default (7d) would
+// silently shrink the spend window that the monthly cost metric represents.
+const (
+	balanceEndpoint = "https://ollama.com/api/balance"
+	usageEndpoint   = "https://ollama.com/api/usage?range=30d"
+)
 
 // userAgent is the header value identifying the webusage version.
 const userAgent = "webusage/1.0.0"
 
-// ErrUnauthorized indicates the API key was rejected. It is distinct from a
-// transport failure so the operator knows to fix OLLAMA_API_KEY rather than
-// wait for the next collection cycle.
-var ErrUnauthorized = errors.New("ollama: API key rejected; check OLLAMA_API_KEY")
+// ErrUnauthorized indicates the API key was rejected (401) or the account is
+// suspended (403). It is distinct from a transport failure so the operator
+// knows to fix OLLAMA_API_KEY or the account rather than wait for the next
+// collection cycle.
+var ErrUnauthorized = errors.New("ollama: API key rejected or account suspended; check OLLAMA_API_KEY")
 
 // httpDoer is the system boundary seam for HTTP calls. Tests inject a stub based on httptest.Server.
 type httpDoer interface {
@@ -38,10 +44,10 @@ func (httpDefaultDoer) Do(req *http.Request) (*http.Response, error) {
 	return defaultHTTPClient.Do(req)
 }
 
-// buildUsageRequest builds the GET /api/usage request.
+// buildRequest builds a GET request for one of the fixed endpoints.
 // The API key is sent only as a bearer token; it never enters the URL or query.
-func buildUsageRequest(ctx context.Context, apiKey string) (*http.Request, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, usageEndpoint, nil)
+func buildRequest(ctx context.Context, endpoint, apiKey string) (*http.Request, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -51,36 +57,55 @@ func buildUsageRequest(ctx context.Context, apiKey string) (*http.Request, error
 	return req, nil
 }
 
-// getUsage calls GET /api/usage and decodes the response.
-// Errors carry the status code but never the API key or the response body.
+// getBalance calls GET /api/balance and decodes the response.
+func getBalance(ctx context.Context, c httpDoer, apiKey string) (*balanceResponse, error) {
+	var out balanceResponse
+	if err := getJSON(ctx, c, balanceEndpoint, "/api/balance", apiKey, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// getUsage calls GET /api/usage?range=30d and decodes the response.
 func getUsage(ctx context.Context, c httpDoer, apiKey string) (*usageResponse, error) {
-	req, err := buildUsageRequest(ctx, apiKey)
+	var out usageResponse
+	if err := getJSON(ctx, c, usageEndpoint, "/api/usage", apiKey, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// getJSON performs the request and decodes a 200 body into out. name labels
+// errors; they carry the status code but never the API key or the response body.
+// 429 and 503 surface as ordinary status errors: the collection interval is far
+// above the 10 requests/minute limit, so the next cycle is the retry.
+func getJSON(ctx context.Context, c httpDoer, endpoint, name, apiKey string, out any) error {
+	req, err := buildRequest(ctx, endpoint, apiKey)
 	if err != nil {
-		return nil, fmt.Errorf("ollama: building request: %w", err)
+		return fmt.Errorf("ollama: building request: %w", err)
 	}
 
 	resp, err := c.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("ollama: calling /api/usage: %w", err)
+		return fmt.Errorf("ollama: calling %s: %w", name, err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, fmt.Errorf("ollama: reading response: %w", err)
+		return fmt.Errorf("ollama: reading %s response: %w", name, err)
 	}
 
 	switch resp.StatusCode {
 	case http.StatusOK:
 	case http.StatusUnauthorized, http.StatusForbidden:
-		return nil, ErrUnauthorized
+		return ErrUnauthorized
 	default:
-		return nil, fmt.Errorf("ollama: /api/usage returned status %d", resp.StatusCode)
+		return fmt.Errorf("ollama: %s returned status %d", name, resp.StatusCode)
 	}
 
-	var out usageResponse
-	if err := json.Unmarshal(body, &out); err != nil {
-		return nil, fmt.Errorf("ollama: decoding response: %w", err)
+	if err := json.Unmarshal(body, out); err != nil {
+		return fmt.Errorf("ollama: decoding %s response: %w", name, err)
 	}
-	return &out, nil
+	return nil
 }

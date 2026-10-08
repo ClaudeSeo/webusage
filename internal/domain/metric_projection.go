@@ -168,6 +168,7 @@ var providerMetricCycleTypes = map[string]map[string]CycleType{
 	"ollama": {
 		"session": CycleTypeRolling5h,
 		"weekly":  CycleTypeWeekly,
+		"credits": CycleTypeMonthly,
 		"cost":    CycleTypeMonthly,
 	},
 }

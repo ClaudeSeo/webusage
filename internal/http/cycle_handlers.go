@@ -105,9 +105,9 @@ func primaryMetricSet(provider *store.Provider, sets []metricSnapshotSet) *metri
 	if len(sets) == 0 {
 		return nil
 	}
-	config := domain.GetProviderCycleConfig(provider.Name)
+	primaryMetric := domain.ResolvePrimaryMetric(provider.Name, metricNames(sets))
 	for i := range sets {
-		if sets[i].Metric == config.PrimaryMetric {
+		if sets[i].Metric == primaryMetric {
 			return &sets[i]
 		}
 	}
@@ -454,6 +454,9 @@ func (s *Server) handleAPICurrent(w nethttp.ResponseWriter, r *nethttp.Request) 
 			projection := primary.Projection
 			latest := primary.Latest
 			info["primary_metric"] = primary.Metric
+			// The headline's own cycle, which differs from the provider default
+			// when the plan decides the headline (ollama credits).
+			info["cycle_type"] = string(projection.CycleType)
 			info["current_usage"] = projection.CurrentUsage
 			info["usage_percent"] = projection.CurrentPercent
 			info["cycle_start"] = projection.CycleStart
@@ -523,7 +526,7 @@ func (s *Server) handleAPITrends(w nethttp.ResponseWriter, r *nethttp.Request) {
 	requestedMetric := r.URL.Query().Get("metric")
 	primaryMetric := requestedMetric
 	if primaryMetric == "" {
-		primaryMetric = cycleConfig.PrimaryMetric
+		primaryMetric = domain.ResolvePrimaryMetric(p.Name, metricNamesFromSnapshots(latestSnapshots))
 	}
 	if primaryMetric == "" {
 		for _, snapshot := range latestSnapshots {

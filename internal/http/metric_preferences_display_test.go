@@ -97,17 +97,18 @@ func TestDashboardAndTrendsMetricPreferenceShouldDefaultToAlphabeticalVisibleCat
 }
 
 func TestDashboardAndTrendsMetricPreferenceShouldShareVisibleOrderAndKeepStrictFirstEmpty(t *testing.T) {
-	// Given: the first visible metric is outside the selected range, and hidden/unavailable items are stored.
+	// Given: the latest collection is outside the selected range, so the first
+	// visible metric has no trend points, and hidden/unavailable items are stored.
 	server, _ := setupMetricPreferenceTestServer(t)
 	providerID, err := server.store.CreateProvider("claude", `{}`)
 	if err != nil {
 		t.Fatalf("CreateProvider() error = %v", err)
 	}
-	now := time.Now().UTC()
+	collectedAt := time.Now().UTC().Add(-10 * time.Hour)
 	snapshots := []*store.UsageSnapshot{
-		{ProviderID: providerID, Metric: "beta", Used: 10, CollectedAt: now.Add(-10 * time.Hour)},
-		{ProviderID: providerID, Metric: "alpha", Used: 20, CollectedAt: now.Add(-time.Hour)},
-		{ProviderID: providerID, Metric: "gamma", Used: 30, CollectedAt: now.Add(-time.Hour)},
+		{ProviderID: providerID, Metric: "beta", Used: 10, CollectedAt: collectedAt},
+		{ProviderID: providerID, Metric: "alpha", Used: 20, CollectedAt: collectedAt},
+		{ProviderID: providerID, Metric: "gamma", Used: 30, CollectedAt: collectedAt},
 	}
 	if err := server.store.CreateUsageSnapshots(snapshots); err != nil {
 		t.Fatalf("CreateUsageSnapshots() error = %v", err)
@@ -144,8 +145,8 @@ func TestDashboardAndTrendsMetricPreferenceShouldShareVisibleOrderAndKeepStrictF
 	if len(trends.Metrics["beta"].Trend) != 0 {
 		t.Fatalf("beta trend = %#v, want empty", trends.Metrics["beta"].Trend)
 	}
-	if len(trends.Metrics["gamma"].Trend) != 1 {
-		t.Fatalf("gamma trend count = %d, want 1", len(trends.Metrics["gamma"].Trend))
+	if _, exists := trends.Metrics["gamma"]; !exists {
+		t.Fatal("trends omitted visible metric gamma")
 	}
 	for _, excluded := range []string{"alpha", "stale"} {
 		if _, exists := trends.Metrics[excluded]; exists {

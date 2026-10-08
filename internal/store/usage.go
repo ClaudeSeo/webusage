@@ -142,18 +142,21 @@ func (s *Store) GetLatestUsage(providerID int64, metric string) (*UsageSnapshot,
 	return snap, nil
 }
 
-// GetLatestUsageByProvider retrieves all latest metrics for a provider
+// GetLatestUsageByProvider retrieves the metrics of the provider's most recent
+// collection. A collection stamps every metric with the same collected_at, so
+// a metric the provider stopped reporting (for example after a plan change)
+// drops out here instead of showing its last value indefinitely. Its history
+// stays queryable through GetUsageTrends.
 func (s *Store) GetLatestUsageByProvider(providerID int64) ([]*UsageSnapshot, error) {
 	rows, err := s.db.Query(`
 		SELECT us.id, us.provider_id, us.metric, us.used, us."limit", us.reset_at, us.collected_at, us.raw_json
 		FROM usage_snapshots us
-		INNER JOIN (
-			SELECT metric, MAX(collected_at) as max_time
+		WHERE us.provider_id = ?
+		  AND us.collected_at = (
+			SELECT MAX(collected_at)
 			FROM usage_snapshots
 			WHERE provider_id = ?
-			GROUP BY metric
-		) latest ON us.metric = latest.metric AND us.collected_at = latest.max_time
-		WHERE us.provider_id = ?
+		  )
 		ORDER BY us.metric
 	`, providerID, providerID)
 	if err != nil {
@@ -186,6 +189,31 @@ func (s *Store) GetLatestUsageByProvider(providerID int64) ([]*UsageSnapshot, er
 	}
 
 	return snapshots, rows.Err()
+}
+
+// ListUsageMetrics returns every metric key the provider has ever stored,
+// including metrics its latest collection no longer reports.
+func (s *Store) ListUsageMetrics(providerID int64) ([]string, error) {
+	rows, err := s.db.Query(`
+		SELECT DISTINCT metric
+		FROM usage_snapshots
+		WHERE provider_id = ?
+		ORDER BY metric
+	`, providerID)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	var metrics []string
+	for rows.Next() {
+		var metric string
+		if err := rows.Scan(&metric); err != nil {
+			return nil, err
+		}
+		metrics = append(metrics, metric)
+	}
+	return metrics, rows.Err()
 }
 
 // GetUsageTrends retrieves usage trends for a time range

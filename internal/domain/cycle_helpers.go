@@ -30,16 +30,38 @@ var ProviderCycleConfigs = map[string]ProviderCycleConfig{
 		LimitType:     LimitTypeLimited,
 		PrimaryMetric: "credits",
 	},
-	// ollama reports a 5-hour session ratio and a 7-day weekly ratio; weekly is
-	// the headline quota. Ollama's real weekly boundary is per-account (anchored
-	// to the account's own billing day) and /api/usage exposes no reset
-	// timestamp at all, so these boundaries are a calendar-week approximation:
-	// the ratios themselves are exact, only the derived cycle window is not.
+	// ollama legacy plans report 5-hour session and weekly windows, and weekly
+	// is the headline quota. Current plans report monthly "credits" instead,
+	// which providerPrimaryMetricPreferences ranks first. Every Ollama limit
+	// metric carries the API's reset timestamp, so these cycle types only bound
+	// the window when that timestamp is absent or already past.
 	"ollama": {
 		CycleType:     CycleTypeWeekly,
 		LimitType:     LimitTypeLimited,
 		PrimaryMetric: "weekly",
 	},
+}
+
+// providerPrimaryMetricPreferences ranks headline metrics for providers whose
+// headline depends on the account's plan, so the headline is never picked by
+// metric-name order alone. ollama "credits" exists only on current plans and
+// "weekly" only on legacy plans.
+var providerPrimaryMetricPreferences = map[string][]string{
+	"ollama": {"credits", "weekly"},
+}
+
+// ResolvePrimaryMetric returns the provider's headline metric given the
+// metric keys it has stored: the first ranked preference that is stored,
+// otherwise the configured PrimaryMetric.
+func ResolvePrimaryMetric(providerName string, stored []string) string {
+	for _, preferred := range providerPrimaryMetricPreferences[providerName] {
+		for _, metric := range stored {
+			if metric == preferred {
+				return preferred
+			}
+		}
+	}
+	return GetProviderCycleConfig(providerName).PrimaryMetric
 }
 
 // GetProviderCycleConfig returns cycle config for a provider

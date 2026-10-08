@@ -153,8 +153,15 @@ func (s *Server) validateMetricPreferenceUpdates(
 			return nil, nil, fmt.Errorf("loading metric catalog for provider %q: %w", submitted.ProviderID, err)
 		}
 
-		knownMetrics := make(map[string]struct{}, len(catalog)+len(stored.Items))
-		for _, metric := range catalog {
+		// The catalog holds only the latest collection's metrics, so a draft
+		// loaded before a collection retired a metric would otherwise be
+		// rejected. Any metric with stored history is a known key.
+		history, err := s.store.ListUsageMetrics(provider.ID)
+		if err != nil {
+			return nil, nil, fmt.Errorf("loading metric history for provider %q: %w", submitted.ProviderID, err)
+		}
+		knownMetrics := make(map[string]struct{}, len(history)+len(stored.Items))
+		for _, metric := range history {
 			knownMetrics[metric] = struct{}{}
 		}
 		for _, item := range stored.Items {

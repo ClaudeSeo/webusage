@@ -12,8 +12,8 @@ runtime defaults are defined by the parent guide.
 - `native`: provider interface, normalized metric type, and registry.
 - `native/kirocli`: read-only Kiro CLI credential lookup, live usage request,
   and response-to-metric mapping.
-- `native/ollama`: Ollama Cloud usage request keyed by `OLLAMA_API_KEY` and
-  response-to-metric mapping. It has no local state; the key is injected by the
+- `native/ollama`: Ollama Cloud balance and usage requests keyed by
+  `OLLAMA_API_KEY` and response-to-metric mapping for current and legacy plans. It has no local state; the key is injected by the
   composition root.
 - `collector`: coordinates OpenUsage and native collection, provider locking,
   normalization, idempotent persistence, and job state.
@@ -67,7 +67,8 @@ runtime defaults are defined by the parent guide.
 - Derive the management region from `profileArn`; do not substitute the token's
   identity-center region.
 - `native/ollama` sends `OLLAMA_API_KEY` only as a bearer token to the fixed
-  `https://ollama.com/api/usage` endpoint. The key must never enter logs,
+  `https://ollama.com/api/balance` and `https://ollama.com/api/usage?range=30d`
+  endpoints. The key must never enter logs,
   errors, stored `RawJSON`, test failure output, or HTTP responses. Keep the
   host hardcoded and keep using the stdlib redirect policy, which drops
   `Authorization` on a redirect to a different domain; `ollama.com` subdomains
@@ -87,6 +88,9 @@ runtime defaults are defined by the parent guide.
 - `native/kirocli` tests must cover request host/path/headers, token expiry,
   response aggregation, reset-time fallbacks, and absence of credential data in
   persisted raw responses.
-- `native/ollama` tests must cover request URL/headers, rejected-key handling,
-  ratio-to-percent scaling, unreported windows staying unpersisted, context
-  cancellation, and absence of the API key in errors and raw responses.
+- `native/ollama` tests must cover request URLs (including the `range` query)
+  and headers, rejected-key handling, both plan shapes of `/api/balance`
+  (credits spent against the allowance; legacy remaining percent inverted to
+  consumed), reset timestamps, unreported values staying unpersisted, failure
+  of either request, context cancellation, and absence of the API key in errors
+  and raw responses.

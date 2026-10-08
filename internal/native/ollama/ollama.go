@@ -1,7 +1,8 @@
 // Package ollama is a native provider that collects Ollama Cloud usage from
-// https://ollama.com/api/usage. Unlike the other native providers it has no
-// local state to read: the account is identified solely by the OLLAMA_API_KEY
-// environment variable, which the composition root passes to New.
+// https://ollama.com/api/balance and https://ollama.com/api/usage. Unlike the
+// other native providers it has no local state to read: the account is
+// identified solely by the OLLAMA_API_KEY environment variable, which the
+// composition root passes to New.
 //
 // The key is sent only in the Authorization header and must never appear in
 // logs, errors, or the stored RawJSON.
@@ -11,8 +12,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"math"
-	"strconv"
 	"strings"
 	"time"
 
@@ -22,66 +21,80 @@ import (
 // ErrUnavailable is returned when no API key is configured on this machine.
 var ErrUnavailable = errors.New("ollama: OLLAMA_API_KEY is not configured")
 
-// usageRatioScale converts the API's [0,1] limit ratio into the 0-100
-// percentage convention the dashboard already stores for ratio-shaped metrics
-// (used/limit*100 against limit=100), so Ollama compares directly with the
-// OpenUsage-sourced session and premium metrics.
-//
-// The [0,1] contract is what Ollama's own client applies to this field:
-// `fmt.Fprintf(table, "  Used\t%.1f%%\n", limit.Usage*100)`, with a golden test
-// rendering 0.006 as "0.6%". Values above 1 are left unclamped so an account
-// drawing on purchased extra usage reads as over 100% instead of silently
-// pinning at the cap.
-const usageRatioScale = 100.0
+// percentLimit is the denominator for legacy-plan windows. The API reports
+// remaining_percent on a 0-100 scale, so consumption is stored as 100 minus
+// that value against limit 100, matching the dashboard's convention for
+// ratio-shaped metrics.
+const percentLimit = 100.0
 
-// ratioLimit is the denominator paired with a scaled ratio metric.
-const ratioLimit = 100.0
+// balanceResponse is the GET /api/balance response.
+type balanceResponse struct {
+	Included  includedBalance  `json:"included"`
+	Purchased purchasedBalance `json:"purchased"`
+}
 
-// usageResponse is the GET /api/usage response.
+// includedBalance is a union of two plan shapes, decoded into one struct and
+// told apart by which fields are present. Current plans report USD credits
+// (BalanceUSD, AllowanceUSD, Period); legacy plans report Session and Weekly
+// windows. Every field is a pointer so an absent field stays distinguishable
+// from a reported zero.
+type includedBalance struct {
+	BalanceUSD   *float64      `json:"balance_usd,omitempty"`
+	AllowanceUSD *float64      `json:"allowance_usd,omitempty"`
+	Period       *creditPeriod `json:"period,omitempty"`
+	Session      *legacyWindow `json:"session,omitempty"`
+	Weekly       *legacyWindow `json:"weekly,omitempty"`
+}
+
+// creditPeriod is the monthly window of the included credits; Until is the
+// exclusive end and therefore the next reset.
+type creditPeriod struct {
+	From  *time.Time `json:"from,omitempty"`
+	Until *time.Time `json:"until,omitempty"`
+}
+
+// legacyWindow is a legacy-plan limit window.
+type legacyWindow struct {
+	RemainingPercent *float64   `json:"remaining_percent,omitempty"` // 0-100
+	ResetsAt         *time.Time `json:"resets_at,omitempty"`
+}
+
+// purchasedBalance is the unexpired purchased credit balance. It is a balance
+// with no allowance to measure it against, so it is kept in RawJSON only:
+// stored as Used it would read as usage that shrinks while credits are spent.
+type purchasedBalance struct {
+	BalanceUSD *float64 `json:"balance_usd,omitempty"`
+}
+
+// usageResponse is the GET /api/usage?range=30d response. buckets is not
+// decoded: the totals carry every value mapped to a metric, and leaving the
+// 31 daily buckets out keeps them from bloating the stored RawJSON.
 type usageResponse struct {
-	Activity activity `json:"activity"`
-	Limits   limits   `json:"limits"`
+	Range       string       `json:"range"`
+	Scope       string       `json:"scope"`
+	Granularity string       `json:"granularity"`
+	From        *time.Time   `json:"from,omitempty"`
+	Until       *time.Time   `json:"until,omitempty"`
+	Totals      usageMetrics `json:"totals"`
 }
 
-// activity is the spend summary for a trailing reporting window.
-type activity struct {
-	Cost   string         `json:"cost"` // decimal USD string, e.g. "0.00000"
-	Period activityPeriod `json:"period"`
-	Models []modelUsage   `json:"models"`
+// usageMetrics holds the range totals. Legacy-plan requests carry only
+// request counts, so the priced and token fields are optional.
+type usageMetrics struct {
+	RequestCount      int64    `json:"request_count"`
+	UsageUSD          *float64 `json:"usage_usd,omitempty"`
+	InputTokens       *int64   `json:"input_tokens,omitempty"`
+	CachedInputTokens *int64   `json:"cached_input_tokens,omitempty"`
+	OutputTokens      *int64   `json:"output_tokens,omitempty"`
 }
 
-// activityPeriod is the window the activity figures cover. It is a trailing
-// report window (e.g. last_4_weeks ending "now"), not a limit reset boundary,
-// so it is never mapped onto Metric.ResetAt.
-type activityPeriod struct {
-	Type       string     `json:"type"`
-	StartingAt *time.Time `json:"starting_at"`
-	EndingAt   *time.Time `json:"ending_at"`
+// rawPayload is the RawJSON shape: both decoded responses, never the request.
+type rawPayload struct {
+	Balance *balanceResponse `json:"balance"`
+	Usage   *usageResponse   `json:"usage"`
 }
 
-// limits holds the per-window consumption ratios. Buckets are pointers so an
-// absent window stays distinguishable from a window reporting zero usage.
-type limits struct {
-	Session *limitBucket `json:"session"`
-	Weekly  *limitBucket `json:"weekly"`
-}
-
-type limitBucket struct {
-	Usage  *float64     `json:"usage"` // fraction of the plan limit, in [0,1]
-	Models []modelUsage `json:"models"`
-}
-
-// modelUsage is the per-model breakdown. The store has no model dimension, so
-// these are preserved in RawJSON rather than emitted as metrics. Request counts
-// are also not convertible into a quota position: usage is weighted by model and
-// token volume, so two models consume the same window at different rates.
-type modelUsage struct {
-	Name         string `json:"name"`
-	RequestCount int64  `json:"request_count"`
-	Cost         string `json:"cost,omitempty"` // activity models only
-}
-
-// Ollama is the provider that calls the Ollama Cloud usage API.
+// Ollama is the provider that calls the Ollama Cloud account APIs.
 type Ollama struct {
 	apiKey     string
 	httpClient httpDoer
@@ -104,85 +117,95 @@ func (o *Ollama) Name() string { return "ollama" }
 // to probe, so this is a pure in-memory check.
 func (o *Ollama) Available() bool { return o.apiKey != "" }
 
-// Collect calls the usage API and maps the response to canonical metrics.
-// ctx carries the service lifetime so shutdown is not blocked by the request.
+// Collect calls the balance and usage APIs and maps them to canonical metrics.
+// Both calls must succeed: a partial result would persist a cycle with cost
+// silently missing. ctx carries the service lifetime so shutdown is not
+// blocked by either request.
 func (o *Ollama) Collect(ctx context.Context) ([]native.Metric, error) {
 	if o.apiKey == "" {
 		return nil, ErrUnavailable
 	}
 
-	resp, err := getUsage(ctx, o.httpClient, o.apiKey)
+	balance, err := getBalance(ctx, o.httpClient, o.apiKey)
+	if err != nil {
+		return nil, err
+	}
+	usage, err := getUsage(ctx, o.httpClient, o.apiKey)
 	if err != nil {
 		return nil, err
 	}
 
-	metrics := metricsFromUsage(resp)
-	// Marshal only the decoded response so no request credential can reach RawJSON.
-	raw := encodeJSON(resp)
+	metrics := metricsFromBalance(balance)
+	if cost, ok := costMetric(usage); ok {
+		metrics = append(metrics, cost)
+	}
+	// Marshal only the decoded responses so no request credential can reach RawJSON.
+	raw := encodeJSON(rawPayload{Balance: balance, Usage: usage})
 	for i := range metrics {
 		metrics[i].RawJSON = raw
 	}
 	return metrics, nil
 }
 
-// metricsFromUsage maps the usage response into canonical metrics.
+// metricsFromBalance maps the included balance into canonical metrics.
 //
-// session / weekly: limits.<window>.usage scaled from a [0,1] ratio to 0-100
-// with limit 100. A window that reports no usage value is skipped so an
-// unreported limit is never persisted as 0%.
+// credits (current plans): allowance_usd - balance_usd spent against limit
+// allowance_usd, resetting at period.until. Skipped without a positive
+// allowance, since there is then no quota position to report.
 //
-// cost: activity.cost parsed from its decimal USD string, with no limit — the
-// endpoint publishes no spend cap. An absent or malformed value is dropped
-// rather than stored as 0, which would understate real spend. It is a separate
-// meter from the limit ratios: spend accrues over activity.period (a trailing
-// four weeks) while the ratios track plan quota over 5h and 7d windows.
-//
-// ResetAt is left nil throughout: the payload carries no limit reset timestamp
-// in any field, and activity.period is a trailing report window rather than a
-// reset boundary. Cycle boundaries therefore come from the provider's cycle
-// config in internal/domain.
-func metricsFromUsage(resp *usageResponse) []native.Metric {
+// session / weekly (legacy plans): 100 - remaining_percent against limit 100,
+// resetting at resets_at. The keys match the earlier /api/usage ratios so the
+// stored history stays continuous. A window that reports no remaining value is
+// skipped so it is never persisted as 100% consumed.
+func metricsFromBalance(resp *balanceResponse) []native.Metric {
 	if resp == nil {
 		return nil
 	}
 
 	var metrics []native.Metric
-	if m, ok := ratioMetric("session", resp.Limits.Session); ok {
+	in := resp.Included
+	if in.BalanceUSD != nil && in.AllowanceUSD != nil && *in.AllowanceUSD > 0 {
+		limit := *in.AllowanceUSD
+		m := native.Metric{Metric: "credits", Used: limit - *in.BalanceUSD, Limit: &limit}
+		if in.Period != nil {
+			m.ResetAt = in.Period.Until
+		}
 		metrics = append(metrics, m)
 	}
-	if m, ok := ratioMetric("weekly", resp.Limits.Weekly); ok {
+	if m, ok := legacyMetric("session", in.Session); ok {
 		metrics = append(metrics, m)
 	}
-	if cost, ok := parseCost(resp.Activity.Cost); ok {
-		metrics = append(metrics, native.Metric{Metric: "cost", Used: cost})
+	if m, ok := legacyMetric("weekly", in.Weekly); ok {
+		metrics = append(metrics, m)
 	}
 	return metrics
 }
 
-// parseCost parses the decimal cost string, rejecting non-finite values along
-// with malformed ones. ParseFloat accepts "NaN" and "Inf", and either would
-// make json.Marshal fail for the whole /api/current response — one upstream
-// field change would take down every provider's view, not just this metric.
-func parseCost(s string) (float64, bool) {
-	v, err := strconv.ParseFloat(s, 64)
-	if err != nil || math.IsNaN(v) || math.IsInf(v, 0) {
-		return 0, false
-	}
-	return v, true
-}
-
-// ratioMetric builds a scaled percentage metric from a limit bucket.
-// The second return is false when the window reports no usage value.
-func ratioMetric(name string, bucket *limitBucket) (native.Metric, bool) {
-	if bucket == nil || bucket.Usage == nil {
+// legacyMetric builds a consumed-percent metric from a legacy window.
+// The second return is false when the window reports no remaining value.
+func legacyMetric(name string, w *legacyWindow) (native.Metric, bool) {
+	if w == nil || w.RemainingPercent == nil {
 		return native.Metric{}, false
 	}
-	limit := ratioLimit
+	limit := percentLimit
 	return native.Metric{
-		Metric: name,
-		Used:   *bucket.Usage * usageRatioScale,
-		Limit:  &limit,
+		Metric:  name,
+		Used:    percentLimit - *w.RemainingPercent,
+		Limit:   &limit,
+		ResetAt: w.ResetsAt,
 	}, true
+}
+
+// costMetric maps the 30-day usage_usd total into a limit-free spend metric.
+// The total values every request in the range, both plan-covered and paid
+// from purchased credits. It is absent when the range includes legacy-plan
+// requests; that is dropped rather than stored as 0, which would understate
+// real spend.
+func costMetric(resp *usageResponse) (native.Metric, bool) {
+	if resp == nil || resp.Totals.UsageUSD == nil {
+		return native.Metric{}, false
+	}
+	return native.Metric{Metric: "cost", Used: *resp.Totals.UsageUSD}, true
 }
 
 // encodeJSON encodes v as a JSON string; returns an empty string on failure (debug only).

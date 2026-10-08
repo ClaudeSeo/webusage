@@ -338,6 +338,7 @@ func TestResolveMetricCycleTypeUsesMetricSpecificCyclesBeforeProviderFallback(t 
 		{provider: "claude", metric: "fable", fallback: CycleTypeRolling5h, want: CycleTypeWeekly},
 		{provider: "codex", metric: "spark weekly", fallback: CycleTypeRolling5h, want: CycleTypeWeekly},
 		{provider: "ollama", metric: "cost", fallback: CycleTypeWeekly, want: CycleTypeMonthly},
+		{provider: "ollama", metric: "credits", fallback: CycleTypeWeekly, want: CycleTypeMonthly},
 		{provider: "unknown", metric: "weekly bonus", fallback: CycleTypeDaily, want: CycleTypeWeekly},
 		{provider: "unknown", metric: "other", fallback: CycleTypeMonthly, want: CycleTypeMonthly},
 	}

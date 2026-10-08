@@ -3,12 +3,23 @@ package ollama
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/ClaudeSeo/webusage/internal/native"
 )
 
-// ratio returns a pointer to v, mirroring the API's nullable usage field.
-func ratio(v float64) *float64 { return &v }
+// num returns a pointer to v, mirroring the API's optional numeric fields.
+func num(v float64) *float64 { return &v }
+
+// at parses an RFC 3339 timestamp for test fixtures.
+func at(t *testing.T, s string) *time.Time {
+	t.Helper()
+	v, err := time.Parse(time.RFC3339, s)
+	if err != nil {
+		t.Fatalf("parse %q: %v", s, err)
+	}
+	return &v
+}
 
 // byMetric indexes collected metrics by their canonical key.
 func byMetric(metrics []native.Metric) map[string]native.Metric {
@@ -36,153 +47,154 @@ func TestAvailableShouldReflectAPIKeyPresence(t *testing.T) {
 	}
 }
 
-func TestMetricsFromUsageShouldScaleLimitRatiosToPercent(t *testing.T) {
-	// Given: the API reports limit consumption as a [0,1] ratio.
-	resp := &usageResponse{
-		Limits: limits{
-			Session: &limitBucket{Usage: ratio(0.02)},
-			Weekly:  &limitBucket{Usage: ratio(0.365)},
+func TestMetricsFromBalanceShouldEmitSpentCreditsWhenPlanHasIncludedCredits(t *testing.T) {
+	// Given: a current plan with 40.25 of 50 USD included credits remaining.
+	until := at(t, "2026-09-01T00:00:00Z")
+	resp := &balanceResponse{
+		Included: includedBalance{
+			BalanceUSD:   num(40.25),
+			AllowanceUSD: num(50),
+			Period:       &creditPeriod{From: at(t, "2026-08-01T00:00:00Z"), Until: until},
 		},
+		Purchased: purchasedBalance{BalanceUSD: num(10)},
 	}
 
 	// When
-	got := byMetric(metricsFromUsage(resp))
+	metrics := metricsFromBalance(resp)
 
-	// Then: stored on the dashboard's 0-100 scale with limit 100, so
-	// used/limit*100 renders the same percentage the API reports.
-	session, ok := got["session"]
-	if !ok {
-		t.Fatal("session metric missing")
+	// Then: the remaining balance is inverted into spend against the allowance,
+	// resetting at the period end. Purchased credits stay out of the metrics.
+	if len(metrics) != 1 || metrics[0].Metric != "credits" {
+		t.Fatalf("metrics = %+v, want a single credits metric", metrics)
 	}
-	if session.Used != 2 {
-		t.Errorf("session used = %v, want 2", session.Used)
+	credits := metrics[0]
+	if credits.Used != 9.75 {
+		t.Errorf("credits used = %v, want 9.75", credits.Used)
 	}
-	if session.Limit == nil || *session.Limit != 100 {
-		t.Errorf("session limit = %v, want 100", session.Limit)
+	if credits.Limit == nil || *credits.Limit != 50 {
+		t.Errorf("credits limit = %v, want 50", credits.Limit)
 	}
-
-	weekly, ok := got["weekly"]
-	if !ok {
-		t.Fatal("weekly metric missing")
-	}
-	if weekly.Used != 36.5 {
-		t.Errorf("weekly used = %v, want 36.5", weekly.Used)
-	}
-	if weekly.Limit == nil || *weekly.Limit != 100 {
-		t.Errorf("weekly limit = %v, want 100", weekly.Limit)
+	if credits.ResetAt == nil || !credits.ResetAt.Equal(*until) {
+		t.Errorf("credits reset = %v, want %v", credits.ResetAt, until)
 	}
 }
 
-func TestMetricsFromUsageShouldEmitZeroWhenLimitReportsNoConsumption(t *testing.T) {
-	// Given: session present with an explicit zero (distinct from "not reported").
-	resp := &usageResponse{
-		Limits: limits{Session: &limitBucket{Usage: ratio(0)}},
-	}
+func TestMetricsFromBalanceShouldSkipCreditsWhenAllowanceIsNotPositive(t *testing.T) {
+	// Given: credit fields present but the allowance is missing or zero.
+	for name, allowance := range map[string]*float64{"absent": nil, "zero": num(0)} {
+		resp := &balanceResponse{
+			Included: includedBalance{BalanceUSD: num(0), AllowanceUSD: allowance},
+		}
 
-	// When
-	metrics := metricsFromUsage(resp)
+		// When
+		metrics := metricsFromBalance(resp)
 
-	// Then: a reported zero is stored so the trend keeps a continuous series.
-	if len(metrics) != 1 || metrics[0].Metric != "session" {
-		t.Fatalf("metrics = %+v, want a single session metric", metrics)
-	}
-	if metrics[0].Used != 0 {
-		t.Errorf("session used = %v, want 0", metrics[0].Used)
-	}
-}
-
-func TestMetricsFromUsageShouldReportOverLimitWhenRatioExceedsOne(t *testing.T) {
-	// Given: an account drawing on purchased extra usage past its plan limit.
-	resp := &usageResponse{
-		Limits: limits{Weekly: &limitBucket{Usage: ratio(1.2)}},
-	}
-
-	// When
-	metrics := metricsFromUsage(resp)
-
-	// Then: reported as 120% rather than clamped, so an overrun stays visible.
-	if len(metrics) != 1 {
-		t.Fatalf("metrics = %+v, want 1", metrics)
-	}
-	if metrics[0].Used != 120 {
-		t.Errorf("weekly used = %v, want 120 (unclamped)", metrics[0].Used)
+		// Then: no limit means no quota position, so nothing is stored as 0%.
+		if len(metrics) != 0 {
+			t.Errorf("%s: metrics = %+v, want none", name, metrics)
+		}
 	}
 }
 
-func TestMetricsFromUsageShouldSkipLimitsThatAreNotReported(t *testing.T) {
-	// Given: weekly bucket absent, session bucket present but without a usage value.
-	resp := &usageResponse{
-		Limits: limits{Session: &limitBucket{Usage: nil}},
+func TestMetricsFromBalanceShouldInvertRemainingPercentWhenPlanIsLegacy(t *testing.T) {
+	// Given: a legacy plan reporting remaining percentages and reset times.
+	sessionReset := at(t, "2026-08-02T12:00:00Z")
+	weeklyReset := at(t, "2026-08-06T00:00:00Z")
+	resp := &balanceResponse{
+		Included: includedBalance{
+			Session: &legacyWindow{RemainingPercent: num(60), ResetsAt: sessionReset},
+			Weekly:  &legacyWindow{RemainingPercent: num(25), ResetsAt: weeklyReset},
+		},
+		Purchased: purchasedBalance{BalanceUSD: num(0)},
 	}
 
 	// When
-	metrics := metricsFromUsage(resp)
+	got := byMetric(metricsFromBalance(resp))
 
-	// Then: nothing is persisted, so an unreported limit is not mistaken for 0%.
+	// Then: stored as consumed percent with limit 100 under the existing
+	// session/weekly keys, so the stored history stays continuous.
+	for _, want := range []struct {
+		metric string
+		used   float64
+		reset  *time.Time
+	}{
+		{"session", 40, sessionReset},
+		{"weekly", 75, weeklyReset},
+	} {
+		m, ok := got[want.metric]
+		if !ok {
+			t.Errorf("%s metric missing", want.metric)
+			continue
+		}
+		if m.Used != want.used {
+			t.Errorf("%s used = %v, want %v", want.metric, m.Used, want.used)
+		}
+		if m.Limit == nil || *m.Limit != 100 {
+			t.Errorf("%s limit = %v, want 100", want.metric, m.Limit)
+		}
+		if m.ResetAt == nil || !m.ResetAt.Equal(*want.reset) {
+			t.Errorf("%s reset = %v, want %v", want.metric, m.ResetAt, want.reset)
+		}
+	}
+	if len(got) != 2 {
+		t.Errorf("metrics = %+v, want only session and weekly", got)
+	}
+}
+
+func TestMetricsFromBalanceShouldSkipLegacyWindowsThatAreNotReported(t *testing.T) {
+	// Given: weekly absent, session present without a remaining value.
+	resp := &balanceResponse{
+		Included: includedBalance{Session: &legacyWindow{ResetsAt: at(t, "2026-08-02T12:00:00Z")}},
+	}
+
+	// When
+	metrics := metricsFromBalance(resp)
+
+	// Then: an unreported window is not mistaken for 100% consumed.
 	if len(metrics) != 0 {
-		t.Errorf("metrics = %+v, want none when no usage is reported", metrics)
+		t.Errorf("metrics = %+v, want none when no remaining value is reported", metrics)
 	}
 }
 
-func TestMetricsFromUsageShouldEmitCostFromDecimalString(t *testing.T) {
-	// Given: the activity cost arrives as a decimal string.
-	resp := &usageResponse{
-		Activity: activity{Cost: "1.23450"},
-		Limits:   limits{Weekly: &limitBucket{Usage: ratio(0.5)}},
-	}
+func TestCostMetricShouldEmitTotalSpendWhenUsageIsPriced(t *testing.T) {
+	// Given: a usage report carrying a USD total.
+	resp := &usageResponse{Totals: usageMetrics{RequestCount: 15, UsageUSD: num(0.01718)}}
 
 	// When
-	got := byMetric(metricsFromUsage(resp))
+	cost, ok := costMetric(resp)
 
-	// Then: parsed into a limit-free spend metric.
-	cost, ok := got["cost"]
+	// Then: a limit-free spend metric.
 	if !ok {
 		t.Fatal("cost metric missing")
 	}
-	if cost.Used != 1.2345 {
-		t.Errorf("cost used = %v, want 1.2345", cost.Used)
+	if cost.Metric != "cost" || cost.Used != 0.01718 {
+		t.Errorf("cost = %+v, want cost used 0.01718", cost)
 	}
 	if cost.Limit != nil {
 		t.Errorf("cost limit = %v, want nil (spend has no cap here)", cost.Limit)
 	}
 }
 
-func TestMetricsFromUsageShouldSkipCostWhenNotParseable(t *testing.T) {
-	// Given: costs that are absent, malformed, or non-finite. ParseFloat accepts
-	// the last group, but a NaN or Inf would break JSON encoding downstream.
-	costs := map[string]string{
-		"absent":    "",
-		"malformed": "n/a",
-		"nan":       "NaN",
-		"inf":       "Inf",
-		"neg-inf":   "-Infinity",
+func TestCostMetricShouldSkipWhenUsageIsNotPriced(t *testing.T) {
+	// Given: legacy requests in the range, which omit usage_usd.
+	resp := &usageResponse{Totals: usageMetrics{RequestCount: 7}}
+
+	// When / Then: unpriced usage is not stored as zero spend.
+	if cost, ok := costMetric(resp); ok {
+		t.Errorf("cost = %+v, want none when usage_usd is absent", cost)
 	}
-	for name, cost := range costs {
-		resp := &usageResponse{
-			Activity: activity{Cost: cost},
-			Limits:   limits{Weekly: &limitBucket{Usage: ratio(0.5)}},
-		}
-
-		// When
-		got := byMetric(metricsFromUsage(resp))
-
-		// Then: the weekly metric still lands; only cost is dropped.
-		if _, exists := got["cost"]; exists {
-			t.Errorf("%s: cost metric emitted, want dropped", name)
-		}
-		if _, exists := got["weekly"]; !exists {
-			t.Errorf("%s: weekly metric dropped, want kept", name)
-		}
+	if _, ok := costMetric(nil); ok {
+		t.Error("cost emitted for a nil response")
 	}
 }
 
-func TestMetricsFromUsageShouldReturnNothingForEmptyResponse(t *testing.T) {
+func TestMetricsFromBalanceShouldReturnNothingForEmptyResponse(t *testing.T) {
 	// Given / When / Then: a nil response yields no metrics rather than panicking.
-	if metrics := metricsFromUsage(nil); len(metrics) != 0 {
+	if metrics := metricsFromBalance(nil); len(metrics) != 0 {
 		t.Errorf("metrics = %+v, want none for nil response", metrics)
 	}
 	// Then: an empty payload is "present but no usage yet", not an error.
-	if metrics := metricsFromUsage(&usageResponse{}); len(metrics) != 0 {
+	if metrics := metricsFromBalance(&balanceResponse{}); len(metrics) != 0 {
 		t.Errorf("metrics = %+v, want none for empty response", metrics)
 	}
 }

@@ -52,12 +52,14 @@ func createMetricPreferenceProvider(t *testing.T, server *Server, name string, m
 	if err != nil {
 		t.Fatalf("CreateProvider(%q) error = %v", name, err)
 	}
+	// One collection stamps every metric with the same time.
+	collectedAt := time.Now().UTC()
 	for index, metric := range metrics {
 		_, err := server.store.CreateUsageSnapshot(&store.UsageSnapshot{
 			ProviderID:  providerID,
 			Metric:      metric,
 			Used:        float64(index + 1),
-			CollectedAt: time.Now().UTC(),
+			CollectedAt: collectedAt,
 		})
 		if err != nil {
 			t.Fatalf("CreateUsageSnapshot(%q) error = %v", metric, err)
@@ -181,6 +183,37 @@ func TestMetricPreferencePUTShouldUpdateOnlySubmittedProvidersAndReturnCanonical
 	}
 	if savedCodex.Version != 1 || !reflect.DeepEqual(savedCodex.Items, codexItems) {
 		t.Fatalf("unsubmitted codex changed: %#v", savedCodex)
+	}
+}
+
+func TestMetricPreferencePUTShouldAcceptDraftWhenCollectionRetiredASubmittedMetric(t *testing.T) {
+	// Given: the settings drawer loaded session and weekly, then a collection
+	// reported only credits, and no preference was ever saved.
+	server, _ := setupMetricPreferenceTestServer(t)
+	providerID := createMetricPreferenceProvider(t, server, "ollama", "session", "weekly")
+	mustCreateHTTPTestSnapshot(t, server, &store.UsageSnapshot{
+		ProviderID:  providerID,
+		Metric:      "credits",
+		Used:        9.75,
+		Limit:       floatPtr(50),
+		CollectedAt: time.Now().UTC().Add(time.Minute),
+	})
+	body := `{"providers":[{"provider_id":"ollama","expected_version":0,"items":[{"metric":"weekly","visible":true},{"metric":"session","visible":false}]}]}`
+
+	// When: the open drawer saves its draft.
+	recorder := performMetricPreferenceRequest(server, nethttp.MethodPut, body)
+
+	// Then: the draft is saved; the retired metrics, never stored as a
+	// preference, drop out and the current metric stays visible.
+	if recorder.Code != nethttp.StatusOK {
+		t.Fatalf("PUT status = %d, want 200; body=%s", recorder.Code, recorder.Body.String())
+	}
+	ollama := findMetricPreferenceProvider(t, decodeMetricPreferenceResponse(t, recorder).Providers, "ollama")
+	wantItems := []domain.ReconciledMetricPreferenceItem{
+		{Metric: "credits", Label: "크레딧", Visible: true, Available: true},
+	}
+	if !reflect.DeepEqual(ollama.Items, wantItems) {
+		t.Fatalf("ollama items = %#v, want %#v", ollama.Items, wantItems)
 	}
 }
 

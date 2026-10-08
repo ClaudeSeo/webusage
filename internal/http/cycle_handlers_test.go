@@ -552,3 +552,70 @@ func floatPtr(f float64) *float64 {
 func timePtr(t time.Time) *time.Time {
 	return &t
 }
+
+func TestPrimaryMetricSetShouldSelectOllamaCreditsOverStaleWeeklyWhenPlanIsCurrent(t *testing.T) {
+	// Given: a current-plan Ollama account that still has a weekly snapshot
+	// left from before it moved off the legacy plan. Sets arrive in
+	// metric-name order.
+	creditsLimit, percentLimit := 50.0, 100.0
+	provider := &store.Provider{Name: "ollama"}
+	sets := []metricSnapshotSet{
+		{Metric: "cost", Latest: &store.UsageSnapshot{Metric: "cost", Used: 1.5}},
+		{Metric: "credits", Latest: &store.UsageSnapshot{Metric: "credits", Used: 9.75, Limit: &creditsLimit}},
+		{Metric: "weekly", Latest: &store.UsageSnapshot{Metric: "weekly", Used: 40, Limit: &percentLimit}},
+	}
+
+	// When
+	primary := primaryMetricSet(provider, sets)
+
+	// Then: the live quota headlines the card, not the frozen weekly window.
+	if primary == nil || primary.Metric != "credits" {
+		t.Fatalf("primary = %+v, want credits", primary)
+	}
+}
+
+func TestCurrentEndpointShouldReportOllamaCreditsWhenPlanIsCurrent(t *testing.T) {
+	// Given: stored ollama metrics of a current-plan account, including a
+	// stale weekly window that sorts after credits and an uncapped cost that
+	// sorts before it.
+	server, cleanup := setupTestServerForCycle(t)
+	defer cleanup()
+	ollamaID := mustCreateHTTPTestProvider(t, server, "ollama", `{}`)
+	now := time.Now().UTC().Truncate(time.Second)
+	creditsReset := timePtr(now.Add(10 * 24 * time.Hour))
+	for _, snap := range []*store.UsageSnapshot{
+		{ProviderID: ollamaID, Metric: "weekly", Used: 40, Limit: floatPtr(100), CollectedAt: now.Add(-48 * time.Hour)},
+		{ProviderID: ollamaID, Metric: "cost", Used: 1.5, CollectedAt: now},
+		{ProviderID: ollamaID, Metric: "credits", Used: 9.75, Limit: floatPtr(50), ResetAt: creditsReset, CollectedAt: now},
+	} {
+		mustCreateHTTPTestSnapshot(t, server, snap)
+	}
+
+	// When
+	w := httptest.NewRecorder()
+	server.mux.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/current", nil))
+
+	// Then: the headline usage is the credits position.
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", w.Code)
+	}
+	var resp map[string]domain.CurrentCycleInfo
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	info, ok := resp["ollama"]
+	if !ok {
+		t.Fatal("ollama missing from /api/current")
+	}
+	if info.CurrentUsage != 9.75 || info.UsagePercent != 19.5 {
+		t.Errorf("current_usage = %v, usage_percent = %v, want 9.75 and 19.5 from credits", info.CurrentUsage, info.UsagePercent)
+	}
+	// Then: the cycle follows the monthly credit period ending at its reset,
+	// not the provider's default weekly calendar.
+	if info.CycleType != "monthly" {
+		t.Errorf("cycle_type = %q, want monthly", info.CycleType)
+	}
+	if info.CycleEnd == nil || !info.CycleEnd.Equal(*creditsReset) {
+		t.Errorf("cycle_end = %v, want credits reset %v", info.CycleEnd, creditsReset)
+	}
+}
